@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SafeSupport - Victim Portal</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <div class="container">
+        <!-- Top Home Navigation Link -->
+        <a href="index.html" class="back-link">← Back to Portal Selection</a>
+
+        <!-- SCREEN 1: Landing -->
+        <div id="screen-1" class="screen active">
+            <div class="header">
+                <div class="logo">SafeSupport</div>
+                <button class="lang-toggle" onclick="toggleLanguage()">English | हिंदी</button>
+            </div>
+            <h1>We are here to listen.</h1>
+            <p>Share what happened in a way that feels comfortable for you.</p>
+            <button class="btn" onclick="nextScreen(2)">Continue</button>
+            <div class="privacy-note">Your information will be handled securely for support and case review.</div>
+        </div>
+
+        <!-- SCREEN 2: Consent -->
+        <div id="screen-2" class="screen">
+            <div class="progress-indicator">● Report ─── ○ Review ─── ○ Submit</div>
+            <h1>Before continuing</h1>
+            <p>Your information will be shared with the organization handling your case for support and review.</p>
+            <div class="privacy-note"><strong>Privacy Note:</strong> Please avoid sharing unnecessary sensitive details like Passwords, Banking details, or OTPs.</div>
+            <label class="checkbox-container">
+                <input type="checkbox" id="consent-checkbox" onchange="toggleConsent()">
+                <span>I understand and agree to share this information for support and review.</span>
+            </label>
+            <button id="consent-btn" class="btn" disabled onclick="nextScreen(3)">Continue</button>
+            <button class="btn btn-outline" onclick="nextScreen(1)">Back</button>
+        </div>
+
+        <!-- SCREEN 3: Report -->
+        <div id="screen-3" class="screen">
+            <div class="progress-indicator">● Report ─── ○ Review ─── ○ Submit</div>
+            <h1>Tell us what happened</h1>
+            <p>You can write or record your experience. Share only what you feel comfortable sharing.</p>
+            
+            <div class="error-msg" id="report-error">Please tell us what happened before submitting your report.</div>
+            
+            <textarea id="report-text" placeholder="Describe your situation..." oninput="updateCharCount()"></textarea>
+            <div class="char-count" id="char-counter">0 / 3000</div>
+
+            <div class="voice-section">
+                <p style="font-size: 13px; margin-bottom: 8px;">──────── OR ────────</p>
+                <button class="voice-btn" onclick="simulateVoiceRecording()">
+                    🎙 <span id="voice-btn-text">Record Voice</span>
+                </button>
+                <div class="recording-status" id="rec-status">🔴 Recording... 00:12</div>
+            </div>
+
+            <button class="btn" onclick="submitReportText()">Continue to Review</button>
+            <button class="btn btn-outline" onclick="nextScreen(2)">Back</button>
+        </div>
+
+        <!-- SCREEN 5: Transcript Review -->
+        <div id="screen-5" class="screen">
+            <div class="progress-indicator">○ Report ─── ● Review ─── ○ Submit</div>
+            <h1>Review your transcript</h1>
+            <p>Please review the transcript below. You can edit it if anything was transcribed incorrectly.</p>
+            
+            <textarea id="transcript-text"></textarea>
+            
+            <button class="btn" onclick="nextScreen(7)">Submit Report</button>
+            <button class="btn btn-outline" onclick="nextScreen(3)">Edit Report</button>
+        </div>
+
+        <!-- SCREEN 7: Processing -->
+        <div id="screen-7" class="screen">
+            <div style="text-align: center; padding: 40px 0;">
+                <div style="width: 40px; height: 40px; border: 4px solid var(--border); border-top: 4px solid var(--primary); border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 20px auto;"></div>
+                <h1>Analyzing your report...</h1>
+                <p>Please wait while your report is prepared for review.</p>
+            </div>
+        </div>
+
+        <!-- SCREEN 8: Confirmation -->
+        <div id="screen-8" class="screen">
+            <div class="progress-indicator">○ Report ─── ○ Review ─── ● Submit</div>
+            <h1>Your report has been submitted.</h1>
+            <p>Thank you for sharing your experience. The support organization will review your report.</p>
+            
+            <div style="font-size: 13px; color: var(--text-muted); text-align: center;">Case ID</div>
+            <div class="case-box" id="case-id-display">CASE-1001</div>
+            
+            <p style="font-size: 12px; text-align: center;">Please keep this case ID for your records.</p>
+            
+            <button class="btn" onclick="resetPortal()">Done</button>
+        </div>
+
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
