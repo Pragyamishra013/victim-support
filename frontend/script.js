@@ -1789,7 +1789,6 @@ document.addEventListener(
         if (status) {
             status.style.display = "none";
         }
-
         // Initialize character count
         updateCharCount();
     }
