@@ -1,53 +1,112 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
+
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SafeSupport - Organization Portal</title>
-    <link rel="stylesheet" href="style.css">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>
+        NIVARAN - Organization Portal
+    </title>
+
+    <link
+        rel="stylesheet"
+        href="style.css"
+    >
+
 </head>
+
 
 <body>
 
+
 <div class="app-container">
 
-    <a href="index.html" class="back-link">← Back to Portal Selection</a>
 
-    <!-- ================= LOGIN VIEW ================= -->
+    <a
+        href="index.html"
+        class="back-link"
+    >
+        ← Back to Portal Selection
+    </a>
 
-    <div id="view-login" class="view active">
 
-        <div style="max-width: 350px; margin: 20px auto; text-align: center;">
+    <!-- =====================================================
+         LOGIN
+    ====================================================== -->
 
-            <div class="logo">SafeSupport</div>
+    <div
+        id="view-login"
+        class="view active"
+    >
 
-            <p style="margin-bottom: 20px;">
+        <div
+            style="
+                max-width:350px;
+                margin:20px auto;
+                text-align:center;
+            "
+        >
+
+            <div class="logo">
+                NIVARAN
+            </div>
+
+
+            <p>
                 Organization Portal
             </p>
 
+
             <div class="form-group">
-                <label>Email</label>
+
+                <label>
+                    Email
+                </label>
+
                 <input
                     type="email"
                     id="login-email"
                     value="staff@safesupport.org"
                 >
+
             </div>
 
+
             <div class="form-group">
-                <label>Password</label>
+
+                <label>
+                    Password
+                </label>
+
                 <input
                     type="password"
                     id="login-password"
                     value="password123"
                 >
+
             </div>
 
-            <button class="btn" onclick="handleLogin()">
+
+            <button
+                class="btn"
+                onclick="handleLogin()"
+            >
                 Sign In
             </button>
 
-            <p style="font-size: 12px; color: var(--text-muted); margin-top: 20px;">
+
+            <p
+                style="
+                    font-size:12px;
+                    margin-top:20px;
+                "
+            >
                 Authorized organization staff only.
             </p>
 
@@ -56,31 +115,44 @@
     </div>
 
 
-    <!-- ================= ORGANIZATION PORTAL ================= -->
+    <!-- =====================================================
+         ORGANIZATION PORTAL
+    ====================================================== -->
 
-    <div id="view-portal" class="view">
+    <div
+        id="view-portal"
+        class="view"
+    >
+
 
         <!-- NAVBAR -->
 
         <div class="navbar">
 
             <div class="nav-brand">
-                SafeSupport Org
+                NIVARAN Org
             </div>
+
 
             <div class="nav-links">
 
-                <span onclick="switchTab('dashboard')">
+                <span
+                    onclick="switchTab('dashboard')"
+                >
                     Dashboard
                 </span>
 
-                <span onclick="switchTab('cases')">
+
+                <span
+                    onclick="switchTab('cases')"
+                >
                     Cases
                 </span>
 
+
                 <span
                     onclick="logoutOrganization()"
-                    style="color: var(--critical);"
+                    style="color:var(--critical);"
                 >
                     Logout
                 </span>
@@ -90,93 +162,161 @@
         </div>
 
 
-        <!-- ================= DASHBOARD ================= -->
+        <!-- =================================================
+             DASHBOARD
+        ================================================== -->
 
-        <div id="tab-dashboard" class="portal-tab">
+        <div
+            id="tab-dashboard"
+            class="portal-tab"
+        >
 
             <h3>
-                Good morning, Support Team
+                Support Team Dashboard
             </h3>
 
+
             <p>
-                Here is the current overview of incoming help reports.
+
+                Overview of reports submitted
+                through the victim portal.
+
             </p>
 
 
-            <!-- LIVE STAT CARDS -->
-
             <div class="cards-grid">
 
+
                 <div class="stat-card">
-                    <span style="font-size: 11px; color: var(--text-muted);">
+
+                    <span
+                        style="
+                            font-size:11px;
+                            color:var(--text-muted);
+                        "
+                    >
                         Total Cases
                     </span>
 
-                    <h3 id="total-case-count">
+                    <h3
+                        id="total-case-count"
+                    >
                         0
                     </h3>
+
                 </div>
 
 
                 <div class="stat-card">
-                    <span style="font-size: 11px; color: var(--text-muted);">
+
+                    <span
+                        style="
+                            font-size:11px;
+                            color:var(--text-muted);
+                        "
+                    >
                         New
                     </span>
 
-                    <h3 id="new-case-count">
+                    <h3
+                        id="new-case-count"
+                    >
                         0
                     </h3>
+
                 </div>
 
 
                 <div class="stat-card">
-                    <span style="font-size: 11px; color: var(--text-muted);">
+
+                    <span
+                        style="
+                            font-size:11px;
+                            color:var(--text-muted);
+                        "
+                    >
                         In Review
                     </span>
 
-                    <h3 id="review-case-count">
+                    <h3
+                        id="review-case-count"
+                    >
                         0
                     </h3>
+
                 </div>
 
 
                 <div class="stat-card">
-                    <span style="font-size: 11px; color: var(--text-muted);">
+
+                    <span
+                        style="
+                            font-size:11px;
+                            color:var(--text-muted);
+                        "
+                    >
                         Resolved
                     </span>
 
-                    <h3 id="resolved-case-count">
+                    <h3
+                        id="resolved-case-count"
+                    >
                         0
                     </h3>
+
                 </div>
 
             </div>
 
 
-            <!-- RECENT CASES -->
-
-            <h4 style="margin-bottom: 10px;">
-                Recent Active Cases
+            <h4
+                style="
+                    margin-bottom:10px;
+                "
+            >
+                Recent Cases
             </h4>
 
-            <div id="dashboard-loading">
-                Loading cases...
-            </div>
 
-            <table id="dashboard-case-table" style="display: none;">
+            <table>
 
                 <thead>
 
                     <tr>
-                        <th>Case ID</th>
-                        <th>Status</th>
-                        <th>Report</th>
-                        <th>Submitted</th>
+
+                        <th>
+                            Case ID
+                        </th>
+
+                        <th>
+                            Source
+                        </th>
+
+                        <th>
+                            Report
+                        </th>
+
+                        <th>
+                            Status
+                        </th>
+
                     </tr>
 
                 </thead>
 
-                <tbody id="dashboard-case-body">
+
+                <tbody
+                    id="dashboard-case-body"
+                >
+
+                    <tr>
+
+                        <td colspan="4">
+                            Loading...
+                        </td>
+
+                    </tr>
+
                 </tbody>
 
             </table>
@@ -184,57 +324,68 @@
         </div>
 
 
-        <!-- ================= CASES TAB ================= -->
+        <!-- =================================================
+             CASES
+        ================================================== -->
 
         <div
             id="tab-cases"
             class="portal-tab"
-            style="display: none;"
+            style="display:none;"
         >
 
             <h3>
                 All Cases
             </h3>
 
+
             <input
                 type="text"
-                id="case-search"
-                placeholder="Search Case ID or report..."
-                style="margin: 15px 0;"
+                placeholder="Search cases..."
+                style="margin:15px 0;"
                 onkeyup="filterCases(this)"
             >
 
 
-            <div id="cases-loading">
-                Loading cases...
-            </div>
-
-
-            <div
-                id="cases-error"
-                style="
-                    display: none;
-                    color: var(--critical);
-                    margin: 15px 0;
-                "
-            >
-            </div>
-
-
-            <table id="cases-table" style="display: none;">
+            <table>
 
                 <thead>
 
                     <tr>
-                        <th>Case ID</th>
-                        <th>Status</th>
-                        <th>Report</th>
-                        <th>Submitted</th>
+
+                        <th>
+                            Case ID
+                        </th>
+
+                        <th>
+                            Source
+                        </th>
+
+                        <th>
+                            Report
+                        </th>
+
+                        <th>
+                            Status
+                        </th>
+
                     </tr>
 
                 </thead>
 
-                <tbody id="case-table-body">
+
+                <tbody
+                    id="case-table-body"
+                >
+
+                    <tr>
+
+                        <td colspan="4">
+                            Loading...
+                        </td>
+
+                    </tr>
+
                 </tbody>
 
             </table>
@@ -242,13 +393,16 @@
         </div>
 
 
-        <!-- ================= CASE DETAIL ================= -->
+        <!-- =================================================
+             CASE DETAIL
+        ================================================== -->
 
         <div
             id="tab-detail"
             class="portal-tab"
-            style="display: none;"
+            style="display:none;"
         >
+
 
             <span
                 class="back-link"
@@ -260,32 +414,31 @@
 
             <div
                 style="
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    margin-bottom: 15px;
+                    display:flex;
+                    justify-content:space-between;
+                    align-items:center;
+                    margin-bottom:15px;
                 "
             >
 
-                <h2 id="detail-case-id">
-                    CASE
+                <h2
+                    id="detail-case-id"
+                >
+                    —
                 </h2>
 
-                <div>
 
-                    <span
-                        id="detail-status-badge"
-                        class="badge new"
-                    >
-                        NEW
-                    </span>
-
-                </div>
+                <span
+                    id="detail-status-badge"
+                    class="badge new"
+                >
+                    NEW
+                </span>
 
             </div>
 
 
-            <!-- CASE OVERVIEW -->
+            <!-- OVERVIEW -->
 
             <div class="section-box">
 
@@ -293,23 +446,22 @@
                     Case Overview
                 </h4>
 
+
                 <p
                     style="
-                        font-size: 13px;
-                        margin: 0;
+                        font-size:13px;
+                        margin:0;
                     "
                 >
 
-                    <strong>Status:</strong>
-                    <span id="detail-status">
-                        NEW
-                    </span>
+                    <strong>
+                        Submitted:
+                    </strong>
 
-                    &nbsp; | &nbsp;
-
-                    <strong>Submitted:</strong>
-                    <span id="detail-submitted">
-                        -
+                    <span
+                        id="detail-submitted"
+                    >
+                        —
                     </span>
 
                 </p>
@@ -317,7 +469,7 @@
             </div>
 
 
-            <!-- ORIGINAL STATEMENT -->
+            <!-- STATEMENT -->
 
             <div class="section-box">
 
@@ -325,22 +477,90 @@
                     Original Statement
                 </h4>
 
+
                 <p
                     id="detail-statement"
                     style="
-                        font-size: 14px;
-                        font-style: italic;
-                        margin: 0;
-                        white-space: pre-wrap;
+                        font-size:14px;
+                        font-style:italic;
+                        margin:0;
+                        white-space:pre-wrap;
                     "
                 >
-                    Loading...
+                    —
                 </p>
 
             </div>
 
 
-            <!-- AI ASSESSMENT PLACEHOLDER -->
+            <!-- =================================================
+                 AUDIO
+            ================================================== -->
+
+            <div class="section-box">
+
+                <h4>
+                    Voice Recording
+                </h4>
+
+
+                <div
+                    id="audio-player-container"
+                >
+
+                    <p style="margin:0;">
+                        Loading recording...
+                    </p>
+
+                </div>
+
+            </div>
+
+
+            <!-- STATUS -->
+
+            <div class="section-box">
+
+                <h4>
+                    Case Status
+                </h4>
+
+
+                <select
+                    id="detail-status"
+                >
+
+                    <option value="NEW">
+                        NEW
+                    </option>
+
+                    <option value="IN_REVIEW">
+                        IN REVIEW
+                    </option>
+
+                    <option value="RESOLVED">
+                        RESOLVED
+                    </option>
+
+                </select>
+
+
+                <button
+                    class="btn"
+                    style="
+                        width:auto;
+                        padding:8px 12px;
+                        font-size:13px;
+                    "
+                    onclick="updateCaseStatus()"
+                >
+                    Update Status
+                </button>
+
+            </div>
+
+
+            <!-- AI -->
 
             <div class="section-box">
 
@@ -348,37 +568,27 @@
                     AI-Assisted Assessment
                 </h4>
 
+
                 <div class="disclaimer">
 
-                    AI assessment has not been run on this case yet.
-
-                    This section will later contain structured AI-assisted
-                    analysis for human review. It is not a medical or
-                    psychological diagnosis.
+                    This section is reserved
+                    for the AI assessment service.
+                    It is intended to assist human
+                    review and is not a medical
+                    or psychological diagnosis.
 
                 </div>
 
-                <p
-                    style="
-                        font-size: 13px;
-                        margin-top: 10px;
-                    "
-                >
-
-                    <strong>Incident Types:</strong>
-                    Not analyzed yet
-
-                </p>
 
                 <p
                     style="
-                        font-size: 13px;
-                        margin-top: 4px;
+                        font-size:13px;
+                        margin-top:10px;
                     "
                 >
 
-                    <strong>Distress Indicators:</strong>
-                    Not analyzed yet
+                    AI assessment will be connected
+                    by the backend/AI team.
 
                 </p>
 
@@ -393,29 +603,29 @@
                     Assigned Counsellor
                 </h4>
 
+
                 <p
                     id="assigned-counsellor-text"
-                    style="
-                        font-size: 13px;
-                        margin-bottom: 8px;
-                    "
+                    style="font-size:13px;"
                 >
                     Not Assigned
                 </p>
 
+
                 <button
                     class="btn"
                     style="
-                        padding: 8px 12px;
-                        width: auto;
-                        font-size: 13px;
+                        padding:8px 12px;
+                        width:auto;
+                        font-size:13px;
                     "
-                    onclick="openModal()"
+                    onclick="openCounsellorModal()"
                 >
                     Assign Counsellor
                 </button>
 
             </div>
+
 
         </div>
 
@@ -424,7 +634,9 @@
 </div>
 
 
-<!-- ================= COUNSELLOR MODAL ================= -->
+<!-- =========================================================
+     COUNSELLOR MODAL
+========================================================== -->
 
 <div
     id="counsellor-modal"
@@ -437,14 +649,11 @@
             Assign Counsellor
         </h3>
 
+
         <p
-            style="
-                font-size: 12px;
-                color: var(--text-muted);
-                margin-bottom: 15px;
-            "
+            style="font-size:12px;"
         >
-            Select an available expert for this case.
+            Select an available counsellor.
         </p>
 
 
@@ -460,8 +669,8 @@
 
                 <span
                     style="
-                        font-size: 11px;
-                        color: var(--text-muted);
+                        font-size:11px;
+                        color:var(--text-muted);
                     "
                 >
                     Domestic Violence
@@ -469,12 +678,13 @@
 
             </div>
 
+
             <button
                 class="btn"
                 style="
-                    padding: 6px 12px;
-                    width: auto;
-                    margin: 0;
+                    padding:6px 12px;
+                    width:auto;
+                    margin:0;
                 "
                 onclick="assignCounsellor('Priya Sharma')"
             >
@@ -496,8 +706,8 @@
 
                 <span
                     style="
-                        font-size: 11px;
-                        color: var(--text-muted);
+                        font-size:11px;
+                        color:var(--text-muted);
                     "
                 >
                     Cyber Harassment
@@ -505,12 +715,13 @@
 
             </div>
 
+
             <button
                 class="btn"
                 style="
-                    padding: 6px 12px;
-                    width: auto;
-                    margin: 0;
+                    padding:6px 12px;
+                    width:auto;
+                    margin:0;
                 "
                 onclick="assignCounsellor('Rahul Verma')"
             >
@@ -518,11 +729,11 @@
             </button>
 
         </div>
-        
+
+
         <button
             class="btn btn-outline"
-            style="margin-top: 15px;"
-            onclick="closeModal()"
+            onclick="closeCounsellorModal()"
         >
             Cancel
         </button>
@@ -535,4 +746,5 @@
 <script src="script.js"></script>
 
 </body>
+
 </html>

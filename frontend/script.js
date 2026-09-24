@@ -1,47 +1,118 @@
-// ============================================================
-// NIVARAN / SafeSupport - Frontend JavaScript
-// ============================================================
+const API_BASE_URL =
+    "http://localhost:5000/api";
 
-// Backend API
-const API_BASE_URL = "http://localhost:5000/api";
 
 // ============================================================
-// GLOBAL VARIABLES
+// GLOBAL STATE
 // ============================================================
 
 let currentCaseId = null;
 
 let mediaRecorder = null;
+
+let mediaStream = null;
+
 let audioChunks = [];
+
 let recordedAudioBlob = null;
 
-let organizationCases = [];
-let currentOrganizationCase = null;
+let recordedAudioUrl = null;
+
+let isRecording = false;
 
 
 // ============================================================
-// SCREEN NAVIGATION
+// HELPER FUNCTIONS
 // ============================================================
 
-function nextScreen(screenNumber) {
-    document.querySelectorAll(".screen").forEach(screen => {
-        screen.classList.remove("active");
-    });
+function escapeHtml(value) {
 
-    const targetScreen = document.getElementById(`screen-${screenNumber}`);
+    return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
 
-    if (targetScreen) {
-        targetScreen.classList.add("active");
+
+function formatFileSize(bytes) {
+
+    if (!bytes) {
+        return "0 KB";
+    }
+
+    if (bytes < 1024) {
+        return `${bytes} B`;
+    }
+
+    if (bytes < 1024 * 1024) {
+        return `${(
+            bytes / 1024
+        ).toFixed(1)} KB`;
+    }
+
+    return `${(
+        bytes /
+        (1024 * 1024)
+    ).toFixed(2)} MB`;
+}
+
+
+async function readJsonResponse(response) {
+
+    const text =
+        await response.text();
+
+    try {
+
+        return text
+            ? JSON.parse(text)
+            : {};
+
+    } catch {
+
+        return {
+            success: false,
+            message:
+                text ||
+                `HTTP ${response.status}`
+        };
     }
 }
 
 
 // ============================================================
-// LANGUAGE
+// VICTIM PORTAL
 // ============================================================
 
-function toggleLanguage() {
-    alert("Hindi language support will be added soon.");
+function nextScreen(screenNumber) {
+
+    const screens =
+        document.querySelectorAll(
+            ".screen"
+        );
+
+    if (!screens.length) {
+        return;
+    }
+
+    screens.forEach(screen => {
+        screen.classList.remove(
+            "active"
+        );
+    });
+
+    const target =
+        document.getElementById(
+            `screen-${screenNumber}`
+        );
+
+    if (target) {
+        target.classList.add(
+            "active"
+        );
+    }
 }
 
 
@@ -50,455 +121,584 @@ function toggleLanguage() {
 // ============================================================
 
 function toggleConsent() {
-    const checkbox = document.getElementById("consent-checkbox");
-    const button = document.getElementById("consent-btn");
 
-    if (!checkbox || !button) {
-        return;
+    const checkbox =
+        document.getElementById(
+            "consent-checkbox"
+        );
+
+    const button =
+        document.getElementById(
+            "consent-btn"
+        );
+
+    if (
+        checkbox &&
+        button
+    ) {
+        button.disabled =
+            !checkbox.checked;
     }
-
-    button.disabled = !checkbox.checked;
 }
 
 
 // ============================================================
-// CHARACTER COUNTER
+// CHARACTER COUNT
 // ============================================================
 
 function updateCharCount() {
-    const textarea = document.getElementById("report-text");
-    const counter = document.getElementById("char-counter");
 
-    if (!textarea || !counter) {
+    const text =
+        document.getElementById(
+            "report-text"
+        );
+
+    const counter =
+        document.getElementById(
+            "char-counter"
+        );
+
+    if (!text || !counter) {
         return;
     }
 
-    counter.textContent = `${textarea.value.length} / 3000`;
+    if (text.value.length > 3000) {
+
+        text.value =
+            text.value.slice(
+                0,
+                3000
+            );
+    }
+
+    counter.innerText =
+        `${text.value.length} / 3000`;
 }
 
 
 // ============================================================
-// VOICE RECORDING
+// AUDIO RECORDING
 // ============================================================
+
+function getSupportedAudioMimeType() {
+
+    if (!window.MediaRecorder) {
+        return "";
+    }
+
+    const types = [
+
+        "audio/webm;codecs=opus",
+
+        "audio/webm",
+
+        "audio/ogg;codecs=opus",
+
+        "audio/ogg",
+
+        "audio/mp4"
+    ];
+
+    return types.find(
+        type =>
+            MediaRecorder.isTypeSupported(
+                type
+            )
+    ) || "";
+}
+
 
 async function simulateVoiceRecording() {
 
-    console.log("Voice recording started");
+    const button =
+        document.querySelector(
+            ".voice-btn"
+        );
 
-    // If already recording, stop it
-    if (mediaRecorder && mediaRecorder.state === "recording") {
-        console.log("Stopping current recording...");
+    const buttonText =
+        document.getElementById(
+            "voice-btn-text"
+        );
+
+    const status =
+        document.getElementById(
+            "rec-status"
+        );
+
+    const preview =
+        document.getElementById(
+            "recording-preview"
+        );
+
+
+    // --------------------------------------------------------
+    // STOP RECORDING
+    // --------------------------------------------------------
+
+    if (
+        isRecording &&
+        mediaRecorder
+    ) {
+
         mediaRecorder.stop();
+
         return;
     }
 
-    // Check browser support
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        alert("Your browser does not support microphone recording.");
-        console.error("getUserMedia is not supported.");
+
+    // --------------------------------------------------------
+    // BROWSER SUPPORT
+    // --------------------------------------------------------
+
+    if (
+        !navigator.mediaDevices ||
+        !navigator.mediaDevices.getUserMedia
+    ) {
+
+        alert(
+            "Your browser does not support microphone recording."
+        );
+
         return;
     }
+
+
+    if (!window.MediaRecorder) {
+
+        alert(
+            "Your browser does not support audio recording."
+        );
+
+        return;
+    }
+
+
+    // --------------------------------------------------------
+    // START RECORDING
+    // --------------------------------------------------------
 
     try {
 
-        console.log("Requesting microphone permission...");
+        mediaStream =
+            await navigator.mediaDevices
+                .getUserMedia({
+                    audio: true
+                });
 
-        const stream = await navigator.mediaDevices.getUserMedia({
-            audio: true
-        });
-
-        console.log("Microphone permission granted.");
 
         audioChunks = [];
+
         recordedAudioBlob = null;
 
-        // Determine supported MIME type
-        let mimeType = "";
 
-        if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) {
-            mimeType = "audio/webm;codecs=opus";
-        } else if (MediaRecorder.isTypeSupported("audio/webm")) {
-            mimeType = "audio/webm";
-        } else {
-            mimeType = "";
-        }
-
-        console.log("Selected audio MIME type:", mimeType || "browser default");
-
-        if (mimeType) {
-            mediaRecorder = new MediaRecorder(stream, {
-                mimeType: mimeType
-            });
-        } else {
-            mediaRecorder = new MediaRecorder(stream);
-        }
-
-        console.log("MediaRecorder created:", mediaRecorder);
-
-        // ----------------------------------------------------
-        // When audio data becomes available
-        // ----------------------------------------------------
-
-        mediaRecorder.ondataavailable = (event) => {
-
-            console.log(
-                "Audio data received:",
-                event.data,
-                "size:",
-                event.data.size
-            );
-
-            if (event.data && event.data.size > 0) {
-                audioChunks.push(event.data);
-            }
-        };
+        const mimeType =
+            getSupportedAudioMimeType();
 
 
-        // ----------------------------------------------------
-        // When recording starts
-        // ----------------------------------------------------
-
-        mediaRecorder.onstart = () => {
-
-            console.log("MediaRecorder started.");
-
-            const buttonText =
-                document.getElementById("voice-btn-text");
-
-            const status =
-                document.getElementById("rec-status");
-
-            if (buttonText) {
-                buttonText.textContent = "Stop Recording";
-            }
-
-            if (status) {
-                status.style.display = "block";
-                status.textContent = "🔴 Recording...";
-            }
-        };
+        mediaRecorder =
+            mimeType
+                ? new MediaRecorder(
+                    mediaStream,
+                    {
+                        mimeType
+                    }
+                )
+                : new MediaRecorder(
+                    mediaStream
+                );
 
 
-        // ----------------------------------------------------
-        // When recording stops
-        // ----------------------------------------------------
+        mediaRecorder.ondataavailable =
+            event => {
+
+                if (
+                    event.data &&
+                    event.data.size > 0
+                ) {
+
+                    audioChunks.push(
+                        event.data
+                    );
+                }
+            };
+
+
+        mediaRecorder.onerror =
+            event => {
+
+                console.error(
+                    "MediaRecorder error:",
+                    event.error
+                );
+
+                cleanupRecorder();
+
+                alert(
+                    "Recording failed. Please try again."
+                );
+            };
+
 
         mediaRecorder.onstop = () => {
 
-            console.log("MediaRecorder stopped.");
+            const finalType =
+                mediaRecorder.mimeType ||
+                mimeType ||
+                "audio/webm";
 
-            recordedAudioBlob = new Blob(audioChunks, {
-                type: mediaRecorder.mimeType || "audio/webm"
-            });
 
-            console.log("=================================");
-            console.log("AUDIO RECORDING COMPLETE");
-            console.log("Audio Blob:", recordedAudioBlob);
-            console.log("Audio size:", recordedAudioBlob.size);
-            console.log("Audio type:", recordedAudioBlob.type);
-            console.log("Audio chunks:", audioChunks.length);
-            console.log("=================================");
-
-            // Stop microphone tracks
-            stream.getTracks().forEach(track => {
-                track.stop();
-            });
-
-            const buttonText =
-                document.getElementById("voice-btn-text");
-
-            const status =
-                document.getElementById("rec-status");
-
-            if (buttonText) {
-                buttonText.textContent = "Record Voice Again";
-            }
-
-            if (status) {
-                status.style.display = "block";
-                status.textContent = "✅ Recording ready";
-            }
-
-            // Check whether recording actually contains data
-            if (!recordedAudioBlob || recordedAudioBlob.size === 0) {
-
-                console.error("Audio recording is EMPTY.");
-
-                if (status) {
-                    status.textContent =
-                        "❌ Recording failed. Please try again.";
-                }
-
-                alert(
-                    "No audio was recorded. Please check your microphone and try again."
+            recordedAudioBlob =
+                new Blob(
+                    audioChunks,
+                    {
+                        type:
+                            finalType
+                    }
                 );
 
-                return;
+
+            if (recordedAudioUrl) {
+
+                URL.revokeObjectURL(
+                    recordedAudioUrl
+                );
             }
 
-            console.log("Audio successfully stored in browser.");
-        };
+
+            recordedAudioUrl =
+                URL.createObjectURL(
+                    recordedAudioBlob
+                );
 
 
-        // ----------------------------------------------------
-        // Recorder error
-        // ----------------------------------------------------
+            if (preview) {
 
-        mediaRecorder.onerror = (event) => {
+                preview.src =
+                    recordedAudioUrl;
 
-            console.error(
-                "MediaRecorder error:",
-                event
-            );
+                preview.style.display =
+                    "block";
+            }
 
-            const status =
-                document.getElementById("rec-status");
+
+            if (buttonText) {
+
+                buttonText.innerText =
+                    "Record Again";
+            }
+
 
             if (status) {
-                status.textContent =
-                    "❌ Recording error";
+
+                status.innerText =
+                    "✓ Recording ready";
+
+                status.style.display =
+                    "block";
             }
+
+
+            cleanupRecorder();
         };
 
 
-        // Start recording
-        mediaRecorder.start();
+        mediaRecorder.start(250);
 
-        console.log("Recording is now active.");
 
-        // Automatically stop after 5 minutes
-        setTimeout(() => {
+        isRecording = true;
 
-            if (
-                mediaRecorder &&
-                mediaRecorder.state === "recording"
-            ) {
-                console.log("Maximum recording time reached.");
-                mediaRecorder.stop();
-            }
 
-        }, 5 * 60 * 1000);
+        if (buttonText) {
+
+            buttonText.innerText =
+                "Stop Recording";
+        }
+
+
+        if (status) {
+
+            status.innerText =
+                "🔴 Recording...";
+
+            status.style.display =
+                "block";
+        }
 
     } catch (error) {
 
         console.error(
-            "Microphone access error:",
+            "Microphone error:",
             error
         );
 
-        alert(
-            "Could not access the microphone. Please allow microphone permission and try again."
-        );
+        cleanupRecorder();
+
+
+        if (
+            error.name ===
+            "NotAllowedError"
+        ) {
+
+            alert(
+                "Microphone permission was denied. Please allow microphone access and try again."
+            );
+
+        } else {
+
+            alert(
+                "Could not start recording. Please try again."
+            );
+        }
     }
 }
 
 
+function cleanupRecorder() {
+
+    isRecording = false;
+
+
+    if (mediaStream) {
+
+        mediaStream
+            .getTracks()
+            .forEach(track => {
+                track.stop();
+            });
+    }
+
+
+    mediaStream = null;
+
+    mediaRecorder = null;
+}
+
+
 // ============================================================
-// REPORT TEXT -> REVIEW SCREEN
+// REPORT SCREEN
 // ============================================================
+
+function getReportInput() {
+
+    const reportText =
+        document.getElementById(
+            "report-text"
+        );
+
+    return reportText
+        ? reportText.value.trim()
+        : "";
+}
+
 
 function submitReportText() {
 
-    const reportText =
-        document.getElementById("report-text");
+    const text =
+        getReportInput();
 
-    const transcriptText =
-        document.getElementById("transcript-text");
 
-    const errorMessage =
-        document.getElementById("report-error");
+    const error =
+        document.getElementById(
+            "report-error"
+        );
 
-    if (!reportText || !transcriptText) {
-        console.error("Report textarea not found.");
-        return;
-    }
 
-    const text = reportText.value.trim();
+    const transcript =
+        document.getElementById(
+            "transcript-text"
+        );
 
-    // If there is no written report AND no recording
+
+    const hasText =
+        text.length > 0;
+
+
+    const hasAudio =
+        !!recordedAudioBlob;
+
+
+    // Nothing entered
     if (
-        text === "" &&
-        (!recordedAudioBlob || recordedAudioBlob.size === 0)
+        !hasText &&
+        !hasAudio
     ) {
 
-        if (errorMessage) {
-            errorMessage.style.display = "block";
-        }
+        if (error) {
 
-        alert(
-            "Please write a report or record your experience before continuing."
-        );
+            error.innerText =
+                "Please write a report or record your voice before continuing.";
+
+            error.style.display =
+                "block";
+        }
 
         return;
     }
 
-    if (errorMessage) {
-        errorMessage.style.display = "none";
+
+    if (error) {
+
+        error.style.display =
+            "none";
     }
 
-    // Put written report into review box
-    if (text !== "") {
-        transcriptText.value = text;
-    } else {
-        transcriptText.value =
-            "[Voice recording attached. No written report was provided.]";
+
+    if (transcript) {
+
+        transcript.value =
+            hasText
+                ? text
+                : "[Voice recording attached. Transcript will be added by the backend/AI service.]";
     }
 
-    console.log("Report ready for review.");
-    console.log("Written report length:", text.length);
-
-    if (recordedAudioBlob) {
-        console.log(
-            "Recorded audio size:",
-            recordedAudioBlob.size
-        );
-
-        console.log(
-            "Recorded audio type:",
-            recordedAudioBlob.type
-        );
-    }
 
     nextScreen(5);
 }
 
 
 // ============================================================
-// FINAL REPORT SUBMISSION
+// FINAL SUBMISSION
 // ============================================================
+
+function getAudioExtension(blob) {
+
+    const type =
+        (
+            blob.type || ""
+        ).toLowerCase();
+
+
+    if (type.includes("ogg")) {
+        return "ogg";
+    }
+
+
+    if (type.includes("mp4")) {
+        return "mp4";
+    }
+
+
+    return "webm";
+}
+
 
 async function submitFinalReport() {
 
-    const transcriptElement =
-        document.getElementById("transcript-text");
-
-    if (!transcriptElement) {
-        console.error("transcript-text element not found.");
-        return;
-    }
-
     const transcript =
-        transcriptElement.value.trim();
+        document.getElementById(
+            "transcript-text"
+        );
 
-    console.log("=================================");
-    console.log("SUBMITTING REPORT");
-    console.log("=================================");
 
-    console.log(
-        "Report text:",
+    const submitButton =
+        document.getElementById(
+            "final-submit-btn"
+        );
+
+
+    const statement =
         transcript
-    );
+            ? transcript.value.trim()
+            : "";
 
-    console.log(
-        "Recorded audio:",
-        recordedAudioBlob
-    );
 
-    if (recordedAudioBlob) {
-        console.log(
-            "Recorded audio size:",
-            recordedAudioBlob.size
-        );
-
-        console.log(
-            "Recorded audio type:",
-            recordedAudioBlob.type
-        );
-    }
+    const hasAudio =
+        !!recordedAudioBlob;
 
 
     // --------------------------------------------------------
-    // Validate report
+    // VALIDATION
     // --------------------------------------------------------
 
     if (
-        transcript === "" &&
-        (!recordedAudioBlob || recordedAudioBlob.size === 0)
+        !statement &&
+        !hasAudio
     ) {
 
         alert(
-            "Please provide a report before submitting."
+            "Please enter a report or attach a voice recording."
         );
 
+        nextScreen(3);
+
         return;
+    }
+
+
+    // --------------------------------------------------------
+    // DISABLE BUTTON
+    // --------------------------------------------------------
+
+    if (submitButton) {
+
+        submitButton.disabled =
+            true;
+
+        submitButton.innerText =
+            "Submitting...";
     }
 
 
     try {
 
+        // Show submitting screen
+        nextScreen(7);
+
+
         // ----------------------------------------------------
-        // STEP 1
-        // Create case
+        // CREATE CASE
         // ----------------------------------------------------
 
-        console.log("Creating case on backend...");
+        const caseResponse =
+            await fetch(
+                `${API_BASE_URL}/cases`,
+                {
+                    method: "POST",
 
-        const reportForBackend =
-            transcript ||
-            "[Voice recording submitted without written text.]";
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
 
-        const response = await fetch(
-            `${API_BASE_URL}/cases`,
-            {
-                method: "POST",
+                    body:
+                        JSON.stringify({
+                            statement,
 
-                headers: {
-                    "Content-Type": "application/json"
-                },
+                            source:
+                                hasAudio &&
+                                statement
+                                    ? "text_and_voice"
+                                    : hasAudio
+                                        ? "voice"
+                                        : "text",
 
-                body: JSON.stringify({
-                    reportText: reportForBackend
-                })
-            }
-        );
-
-
-        console.log(
-            "Case creation HTTP status:",
-            response.status
-        );
-
-
-        if (!response.ok) {
-
-            const errorText =
-                await response.text();
-
-            console.error(
-                "Case creation failed:",
-                errorText
+                            language:
+                                "English"
+                        })
+                }
             );
 
-            throw new Error(
-                "Failed to create case."
+
+        const caseData =
+            await readJsonResponse(
+                caseResponse
             );
-        }
-
-
-        const data =
-            await response.json();
-
-        console.log(
-            "Case creation response:",
-            data
-        );
 
 
         if (
-            !data.success ||
-            !data.case ||
-            !data.case.caseId
+            !caseResponse.ok ||
+            !caseData.case
         ) {
 
             throw new Error(
-                "Backend did not return a Case ID."
+                caseData.message ||
+                "Could not create the case."
             );
         }
 
 
-        // Save Case ID
         currentCaseId =
-            data.case.caseId;
+            caseData.case.caseId;
 
 
         console.log(
@@ -508,48 +708,15 @@ async function submitFinalReport() {
 
 
         // ----------------------------------------------------
-        // STEP 2
-        // Upload audio if available
+        // UPLOAD AUDIO
         // ----------------------------------------------------
 
-        if (
-            recordedAudioBlob &&
-            recordedAudioBlob.size > 0
-        ) {
+        if (hasAudio) {
 
-            console.log(
-                "Uploading recorded audio..."
-            );
-
-            console.log(
-                "Audio size:",
-                recordedAudioBlob.size
-            );
-
-            console.log(
-                "Audio type:",
-                recordedAudioBlob.type
-            );
-
-
-            const formData =
-                new FormData();
-
-
-            // Make sure the browser has a usable MIME type
-            let audioExtension = "webm";
-
-            if (
-                recordedAudioBlob.type.includes("ogg")
-            ) {
-                audioExtension = "ogg";
-            }
-
-            if (
-                recordedAudioBlob.type.includes("mp4")
-            ) {
-                audioExtension = "mp4";
-            }
+            const extension =
+                getAudioExtension(
+                    recordedAudioBlob
+                );
 
 
             const audioFile =
@@ -557,13 +724,19 @@ async function submitFinalReport() {
                     [
                         recordedAudioBlob
                     ],
-                    `voice-report.${audioExtension}`,
+
+                    `voice-report.${extension}`,
+
                     {
                         type:
                             recordedAudioBlob.type ||
                             "audio/webm"
                     }
                 );
+
+
+            const formData =
+                new FormData();
 
 
             formData.append(
@@ -573,262 +746,357 @@ async function submitFinalReport() {
 
 
             console.log(
-                "Uploading audio for Case ID:",
-                currentCaseId
-            );
-
-            console.log(
-                "Filename:",
-                audioFile.name
-            );
-
-            console.log(
-                "File size:",
-                audioFile.size
-            );
-
-            console.log(
-                "File type:",
-                audioFile.type
+                "Uploading recorded audio..."
             );
 
 
             const audioResponse =
                 await fetch(
-                    `${API_BASE_URL}/cases/${currentCaseId}/audio`,
+                    `${API_BASE_URL}/cases/${encodeURIComponent(
+                        currentCaseId
+                    )}/audio`,
+
                     {
                         method: "POST",
-                        body: formData
+
+                        body:
+                            formData
                     }
                 );
 
 
-            console.log(
-                "Audio upload HTTP status:",
-                audioResponse.status
-            );
-
-
             const audioData =
-                await audioResponse.json();
-
-
-            console.log(
-                "Audio upload response:",
-                audioData
-            );
-
-
-            if (!audioResponse.ok) {
-
-                console.error(
-                    "Audio upload failed:",
-                    audioData
+                await readJsonResponse(
+                    audioResponse
                 );
 
-                alert(
-                    "Your report was created, but the voice recording could not be uploaded."
-                );
 
-                // We don't cancel the case.
-                // The text report/case already exists.
-            } else {
+            if (
+                !audioResponse.ok
+            ) {
 
-                console.log(
-                    "Audio uploaded successfully:",
-                    audioData
+                throw new Error(
+                    audioData.message ||
+                    "Audio upload failed."
                 );
             }
 
-        } else {
 
             console.log(
-                "No audio recording attached."
+                "Audio uploaded successfully."
             );
         }
 
 
         // ----------------------------------------------------
-        // STEP 3
-        // Show analyzing screen
+        // SHOW CONFIRMATION
         // ----------------------------------------------------
 
-        nextScreen(7);
+        const caseIdDisplay =
+            document.getElementById(
+                "case-id-display"
+            );
 
 
-        // ----------------------------------------------------
-        // STEP 4
-        // Show confirmation
-        // ----------------------------------------------------
+        if (caseIdDisplay) {
 
-        setTimeout(() => {
+            caseIdDisplay.innerText =
+                currentCaseId;
+        }
 
-            const caseDisplay =
-                document.getElementById(
-                    "case-id-display"
-                );
 
-            if (caseDisplay) {
-                caseDisplay.textContent =
-                    currentCaseId;
-            }
-
-            nextScreen(8);
-
-        }, 3000);
-
+        nextScreen(8);
 
     } catch (error) {
 
         console.error(
-            "SUBMISSION ERROR:",
+            "Final submission error:",
             error
         );
 
+
         alert(
-            "Something went wrong while submitting your report. Please check that the backend server is running."
+            `Report could not be submitted.\n\n${error.message}`
         );
+
+
+        nextScreen(5);
+
+    } finally {
+
+        if (submitButton) {
+
+            submitButton.disabled =
+                false;
+
+            submitButton.innerText =
+                "Submit Report";
+        }
     }
 }
 
 
 // ============================================================
-// RESET VICTIM PORTAL
+// OTHER VICTIM FUNCTIONS
 // ============================================================
+
+function toggleLanguage() {
+
+    alert(
+        "Language switch can be connected to the translation layer later."
+    );
+}
+
 
 function resetPortal() {
 
-    console.log("Resetting victim portal...");
-
-    currentCaseId = null;
-
-    recordedAudioBlob = null;
-
-    audioChunks = [];
-
-    mediaRecorder = null;
+    const text =
+        document.getElementById(
+            "report-text"
+        );
 
 
-    const reportText =
-        document.getElementById("report-text");
+    const transcript =
+        document.getElementById(
+            "transcript-text"
+        );
 
-    const transcriptText =
-        document.getElementById("transcript-text");
 
-    const consentCheckbox =
-        document.getElementById("consent-checkbox");
+    const checkbox =
+        document.getElementById(
+            "consent-checkbox"
+        );
+
 
     const consentButton =
-        document.getElementById("consent-btn");
+        document.getElementById(
+            "consent-btn"
+        );
 
-    const charCounter =
-        document.getElementById("char-counter");
+
+    const error =
+        document.getElementById(
+            "report-error"
+        );
+
+
+    const preview =
+        document.getElementById(
+            "recording-preview"
+        );
+
 
     const status =
-        document.getElementById("rec-status");
-
-    const voiceButtonText =
-        document.getElementById("voice-btn-text");
-
-    const errorMessage =
-        document.getElementById("report-error");
+        document.getElementById(
+            "rec-status"
+        );
 
 
-    if (reportText) {
-        reportText.value = "";
+    const buttonText =
+        document.getElementById(
+            "voice-btn-text"
+        );
+
+
+    if (text) {
+        text.value = "";
     }
 
-    if (transcriptText) {
-        transcriptText.value = "";
+
+    if (transcript) {
+        transcript.value = "";
     }
 
-    if (consentCheckbox) {
-        consentCheckbox.checked = false;
+
+    if (checkbox) {
+        checkbox.checked = false;
     }
+
 
     if (consentButton) {
         consentButton.disabled = true;
     }
 
-    if (charCounter) {
-        charCounter.textContent = "0 / 3000";
+
+    if (error) {
+        error.style.display = "none";
     }
+
+
+    if (recordedAudioUrl) {
+
+        URL.revokeObjectURL(
+            recordedAudioUrl
+        );
+    }
+
+
+    recordedAudioUrl = null;
+
+    recordedAudioBlob = null;
+
+    audioChunks = [];
+
+    currentCaseId = null;
+
+
+    if (preview) {
+
+        preview.removeAttribute(
+            "src"
+        );
+
+        preview.load();
+
+        preview.style.display =
+            "none";
+    }
+
 
     if (status) {
-        status.style.display = "none";
-        status.textContent = "🔴 Recording...";
+
+        status.innerText =
+            "🔴 Recording...";
+
+        status.style.display =
+            "none";
     }
 
-    if (voiceButtonText) {
-        voiceButtonText.textContent =
+
+    if (buttonText) {
+
+        buttonText.innerText =
             "Record Voice";
     }
 
-    if (errorMessage) {
-        errorMessage.style.display = "none";
-    }
 
+    cleanupRecorder();
+
+    updateCharCount();
 
     nextScreen(1);
 }
 
 
 // ============================================================
-// ORGANIZATION LOGIN
+// ORGANIZATION PORTAL
+// ============================================================
+
+let organizationCases = [];
+
+let selectedCaseId = null;
+
+
+// ============================================================
+// LOGIN
 // ============================================================
 
 function handleLogin() {
 
-    console.log(
-        "Organization login"
+    const email =
+        document.getElementById(
+            "login-email"
+        );
+
+
+    const password =
+        document.getElementById(
+            "login-password"
+        );
+
+
+    const loginView =
+        document.getElementById(
+            "view-login"
+        );
+
+
+    const portalView =
+        document.getElementById(
+            "view-portal"
+        );
+
+
+    if (
+        !loginView ||
+        !portalView
+    ) {
+        return;
+    }
+
+
+    if (
+        !email ||
+        !email.value.trim()
+    ) {
+
+        alert(
+            "Please enter staff email."
+        );
+
+        return;
+    }
+
+
+    if (
+        !password ||
+        !password.value.trim()
+    ) {
+
+        alert(
+            "Please enter password."
+        );
+
+        return;
+    }
+
+
+    loginView.classList.remove(
+        "active"
     );
 
-    const loginScreen =
-        document.getElementById("login-screen");
 
-    const portal =
-        document.getElementById("org-portal");
+    portalView.classList.add(
+        "active"
+    );
 
-    if (loginScreen) {
-        loginScreen.style.display = "none";
-    }
-
-    if (portal) {
-        portal.style.display = "block";
-    }
-
-    switchTab("dashboard");
 
     loadCases();
+
+    switchTab(
+        "dashboard"
+    );
 }
 
 
-// ============================================================
-// ORGANIZATION LOGOUT
-// ============================================================
-
 function logoutOrganization() {
 
-    console.log(
-        "Organization logout"
-    );
+    const loginView =
+        document.getElementById(
+            "view-login"
+        );
 
-    const loginScreen =
-        document.getElementById("login-screen");
 
-    const portal =
-        document.getElementById("org-portal");
+    const portalView =
+        document.getElementById(
+            "view-portal"
+        );
 
-    if (portal) {
-        portal.style.display = "none";
+
+    if (portalView) {
+
+        portalView.classList.remove(
+            "active"
+        );
     }
 
-    if (loginScreen) {
-        loginScreen.style.display = "block";
-    }
 
-    organizationCases = [];
-    currentOrganizationCase = null;
+    if (loginView) {
+
+        loginView.classList.add(
+            "active"
+        );
+    }
 }
 
 
@@ -838,10 +1106,6 @@ function logoutOrganization() {
 
 async function loadCases() {
 
-    console.log(
-        "Loading cases from backend..."
-    );
-
     try {
 
         const response =
@@ -850,33 +1114,30 @@ async function loadCases() {
             );
 
 
+        const data =
+            await readJsonResponse(
+                response
+            );
+
+
         if (!response.ok) {
+
             throw new Error(
-                "Failed to load cases."
+                data.message ||
+                "Could not load cases."
             );
         }
-
-
-        const data =
-            await response.json();
-
-
-        console.log(
-            "Cases response:",
-            data
-        );
 
 
         organizationCases =
             data.cases || [];
 
 
-        updateCaseStatistics();
-
         renderDashboardCases();
 
         renderCasesTable();
 
+        updateCaseStatistics();
 
     } catch (error) {
 
@@ -884,71 +1145,106 @@ async function loadCases() {
             "Could not load cases:",
             error
         );
+
+
+        const body =
+            document.getElementById(
+                "case-table-body"
+            );
+
+
+        if (body) {
+
+            body.innerHTML = `
+                <tr>
+                    <td colspan="4">
+                        Could not connect to backend.
+                        Make sure the Node server is running on port 5000.
+                    </td>
+                </tr>
+            `;
+        }
     }
 }
 
 
 // ============================================================
-// CASE STATISTICS
+// DASHBOARD STATISTICS
 // ============================================================
 
 function updateCaseStatistics() {
 
-    const totalCount =
+    const total =
+        organizationCases.length;
+
+
+    const newCases =
+        organizationCases.filter(
+            item =>
+                item.status === "NEW"
+        ).length;
+
+
+    const inReview =
+        organizationCases.filter(
+            item =>
+                item.status ===
+                "IN_REVIEW"
+        ).length;
+
+
+    const resolved =
+        organizationCases.filter(
+            item =>
+                item.status ===
+                "RESOLVED"
+        ).length;
+
+
+    const totalEl =
         document.getElementById(
             "total-case-count"
         );
 
-    const newCount =
+
+    const newEl =
         document.getElementById(
             "new-case-count"
         );
 
-    const reviewCount =
+
+    const reviewEl =
         document.getElementById(
             "review-case-count"
         );
 
-    const resolvedCount =
+
+    const resolvedEl =
         document.getElementById(
             "resolved-case-count"
         );
 
 
-    const newCases =
-        organizationCases.filter(
-            item => item.status === "NEW"
-        );
-
-    const reviewCases =
-        organizationCases.filter(
-            item => item.status === "IN_REVIEW"
-        );
-
-    const resolvedCases =
-        organizationCases.filter(
-            item => item.status === "RESOLVED"
-        );
-
-
-    if (totalCount) {
-        totalCount.textContent =
-            organizationCases.length;
+    if (totalEl) {
+        totalEl.innerText = total;
     }
 
-    if (newCount) {
-        newCount.textContent =
-            newCases.length;
+
+    if (newEl) {
+        newEl.innerText =
+            newCases;
     }
 
-    if (reviewCount) {
-        reviewCount.textContent =
-            reviewCases.length;
+
+    if (reviewEl) {
+        reviewEl.innerText =
+            inReview;
     }
 
-    if (resolvedCount) {
-        resolvedCount.textContent =
-            resolvedCases.length;
+
+    if (resolvedEl) {
+        resolvedEl.innerText =
+            resolved;
     }
 }
 
@@ -959,34 +1255,29 @@ function updateCaseStatistics() {
 
 function renderDashboardCases() {
 
-    const tableBody =
+    const body =
         document.getElementById(
             "dashboard-case-body"
         );
 
-    if (!tableBody) {
+
+    if (!body) {
         return;
     }
 
 
-    tableBody.innerHTML = "";
-
-
-    const activeCases =
+    const recent =
         organizationCases
-            .filter(
-                item =>
-                    item.status !== "RESOLVED"
-            )
-            .slice(0, 10);
+            .slice(-5)
+            .reverse();
 
 
-    if (activeCases.length === 0) {
+    if (!recent.length) {
 
-        tableBody.innerHTML = `
+        body.innerHTML = `
             <tr>
-                <td colspan="5">
-                    No active cases found.
+                <td colspan="4">
+                    No submitted cases yet.
                 </td>
             </tr>
         `;
@@ -995,79 +1286,76 @@ function renderDashboardCases() {
     }
 
 
-    activeCases.forEach(caseItem => {
+    body.innerHTML =
+        recent.map(item => `
 
-        const row =
-            document.createElement("tr");
+            <tr
+                onclick="openCaseDetail('${escapeHtml(
+                    item.caseId
+                )}')"
+            >
 
+                <td>
+                    <strong>
+                        ${escapeHtml(
+                            item.caseId
+                        )}
+                    </strong>
+                </td>
 
-        row.innerHTML = `
-            <td>${escapeHtml(caseItem.caseId)}</td>
+                <td>
+                    ${escapeHtml(
+                        item.source ||
+                        "text"
+                    )}
+                </td>
 
-            <td>
-                ${escapeHtml(
-                    truncateText(
-                        caseItem.reportText,
-                        60
-                    )
-                )}
-            </td>
+                <td>
+                    ${escapeHtml(
+                        (
+                            item.statement ||
+                            ""
+                        ).slice(0, 60)
+                    )}
+                </td>
 
-            <td>
-                ${createStatusBadge(
-                    caseItem.status
-                )}
-            </td>
+                <td>
+                    ${createStatusBadge(
+                        item.status
+                    )}
+                </td>
 
-            <td>
-                ${formatDate(
-                    caseItem.createdAt
-                )}
-            </td>
+            </tr>
 
-            <td>
-                <button
-                    class="btn btn-small"
-                    onclick="openCaseDetail('${caseItem.caseId}')"
-                >
-                    View
-                </button>
-            </td>
-        `;
-
-
-        tableBody.appendChild(row);
-    });
+        `).join("");
 }
 
 
 // ============================================================
-// CASES TABLE
+// CASE TABLE
 // ============================================================
 
-function renderCasesTable(
-    filteredCases = organizationCases
-) {
+function renderCasesTable() {
 
-    const tableBody =
+    const body =
         document.getElementById(
             "case-table-body"
         );
 
-    if (!tableBody) {
+
+    if (!body) {
         return;
     }
 
 
-    tableBody.innerHTML = "";
+    if (
+        !organizationCases.length
+    ) {
 
-
-    if (filteredCases.length === 0) {
-
-        tableBody.innerHTML = `
+        body.innerHTML = `
             <tr>
-                <td colspan="6">
-                    No cases found.
+                <td colspan="4">
+                    No submitted cases yet.
                 </td>
             </tr>
         `;
@@ -1076,148 +1364,133 @@ function renderCasesTable(
     }
 
 
-    filteredCases.forEach(caseItem => {
+    body.innerHTML =
+        organizationCases.map(item => `
 
-        const row =
-            document.createElement("tr");
+            <tr
+                onclick="openCaseDetail('${escapeHtml(
+                    item.caseId
+                )}')"
+            >
 
+                <td>
+                    <strong>
+                        ${escapeHtml(
+                            item.caseId
+                        )}
+                    </strong>
+                </td>
 
-        row.innerHTML = `
-            <td>${escapeHtml(caseItem.caseId)}</td>
+                <td>
+                    ${escapeHtml(
+                        item.source ||
+                        "text"
+                    )}
+                </td>
 
-            <td>
-                ${escapeHtml(
-                    truncateText(
-                        caseItem.reportText,
-                        80
-                    )
-                )}
-            </td>
+                <td>
+                    ${escapeHtml(
+                        (
+                            item.statement ||
+                            ""
+                        ).slice(0, 70)
+                    )}
+                </td>
 
-            <td>
-                ${createStatusBadge(
-                    caseItem.status
-                )}
-            </td>
+                <td>
+                    ${createStatusBadge(
+                        item.status
+                    )}
+                </td>
 
-            <td>
-                ${escapeHtml(
-                    caseItem.assignedCounsellor ||
-                    "Unassigned"
-                )}
-            </td>
+            </tr>
 
-            <td>
-                ${formatDate(
-                    caseItem.createdAt
-                )}
-            </td>
-
-            <td>
-                <button
-                    class="btn btn-small"
-                    onclick="openCaseDetail('${caseItem.caseId}')"
-                >
-                    View
-                </button>
-            </td>
-        `;
-
-
-        tableBody.appendChild(row);
-    });
+        `).join("");
 }
 
 
 // ============================================================
-// ORGANIZATION TAB SWITCHING
+// TAB SWITCHING
 // ============================================================
 
 function switchTab(tabName) {
 
-    console.log(
-        "Switching organization tab:",
-        tabName
-    );
+    const tabs =
+        document.querySelectorAll(
+            ".portal-tab"
+        );
 
 
-    document.querySelectorAll(
-        ".org-tab"
-    ).forEach(tab => {
+    tabs.forEach(tab => {
 
-        tab.classList.remove("active");
-
+        tab.style.display =
+            "none";
     });
 
 
-    document.querySelectorAll(
-        ".org-section"
-    ).forEach(section => {
-
-        section.classList.remove("active");
-
-    });
-
-
-    const selectedTab =
+    const target =
         document.getElementById(
             `tab-${tabName}`
         );
 
-    const selectedSection =
-        document.getElementById(
-            `section-${tabName}`
-        );
 
+    if (target) {
 
-    if (selectedTab) {
-        selectedTab.classList.add("active");
-    }
-
-    if (selectedSection) {
-        selectedSection.classList.add("active");
+        target.style.display =
+            "block";
     }
 
 
-    if (tabName === "cases") {
+    if (
+        tabName === "cases"
+    ) {
+
         loadCases();
     }
 }
 
 
 // ============================================================
-// OPEN CASE DETAIL
+// OPEN CASE
 // ============================================================
 
-async function openCaseDetail(caseId) {
+async function openCaseDetail(
+    caseId
+) {
 
-    console.log(
-        "Opening case:",
-        caseId
-    );
+    selectedCaseId =
+        caseId;
 
 
     try {
 
         const response =
             await fetch(
-                `${API_BASE_URL}/cases/${caseId}`
+                `${API_BASE_URL}/cases/${encodeURIComponent(
+                    caseId
+                )}`
             );
 
 
-        if (!response.ok) {
+        const data =
+            await readJsonResponse(
+                response
+            );
+
+
+        if (
+            !response.ok ||
+            !data.case
+        ) {
 
             throw new Error(
+                data.message ||
                 "Could not load case."
             );
         }
 
 
-        const data =
-            await response.json();
-
-
-        currentOrganizationCase =
+        const item =
             data.case;
 
 
@@ -1226,20 +1499,6 @@ async function openCaseDetail(caseId) {
                 "detail-case-id"
             );
 
-        const statusBadge =
-            document.getElementById(
-                "detail-status-badge"
-            );
-
-        const statusElement =
-            document.getElementById(
-                "detail-status"
-            );
-
-        const submittedElement =
-            document.getElementById(
-                "detail-submitted"
-            );
 
         const statementElement =
             document.getElementById(
@@ -1247,68 +1506,181 @@ async function openCaseDetail(caseId) {
             );
 
 
+        const submittedElement =
+            document.getElementById(
+                "detail-submitted"
+            );
+
+
+        const statusElement =
+            document.getElementById(
+                "detail-status"
+            );
+
+
+        const counsellorElement =
+            document.getElementById(
+                "assigned-counsellor-text"
+            );
+
+
         if (caseIdElement) {
-            caseIdElement.textContent =
-                data.case.caseId;
-        }
 
-
-        if (statusBadge) {
-            statusBadge.innerHTML =
-                createStatusBadge(
-                    data.case.status
-                );
-        }
-
-
-        if (statusElement) {
-            statusElement.value =
-                data.case.status;
-        }
-
-
-        if (submittedElement) {
-            submittedElement.textContent =
-                formatDate(
-                    data.case.createdAt
-                );
+            caseIdElement.innerText =
+                item.caseId;
         }
 
 
         if (statementElement) {
-            statementElement.textContent =
-                data.case.reportText;
+
+            statementElement.innerText =
+                item.statement ||
+                "Voice recording submitted. No transcript yet.";
         }
 
 
-        // Update assigned counsellor display
-        const counsellorElement =
-            document.getElementById(
-                "assigned-counsellor"
-            );
+        if (submittedElement) {
+
+            submittedElement.innerText =
+                item.createdAt
+                    ? new Date(
+                        item.createdAt
+                    ).toLocaleString()
+                    : "Not available";
+        }
+
+
+        if (statusElement) {
+
+            statusElement.value =
+                item.status ||
+                "NEW";
+        }
+
 
         if (counsellorElement) {
 
-            counsellorElement.textContent =
-                data.case.assignedCounsellor ||
-                "Unassigned";
+            counsellorElement.innerText =
+                item.counsellor ||
+                "Not Assigned";
         }
 
 
-        switchTab("detail");
+        updateDetailStatusBadge(
+            item.status ||
+            "NEW"
+        );
 
+
+        renderAudioPlayer(
+            item
+        );
+
+
+        switchTab(
+            "detail"
+        );
 
     } catch (error) {
 
         console.error(
-            "Case detail error:",
+            "Could not open case:",
             error
         );
 
         alert(
-            "Could not load case details."
+            error.message
         );
     }
+}
+
+
+// ============================================================
+// AUDIO PLAYER
+// ============================================================
+
+function renderAudioPlayer(
+    caseItem
+) {
+
+    const container =
+        document.getElementById(
+            "audio-player-container"
+        );
+
+
+    if (!container) {
+        return;
+    }
+
+
+    if (
+        !caseItem.audio ||
+        !caseItem.audio.filename
+    ) {
+
+        container.innerHTML = `
+            <p style="margin:0;">
+                No voice recording was attached to this case.
+            </p>
+        `;
+
+        return;
+    }
+
+
+    const audioUrl =
+        `${API_BASE_URL}/cases/${encodeURIComponent(
+            caseItem.caseId
+        )}/audio`;
+
+
+    container.innerHTML = `
+
+        <audio
+            controls
+            preload="metadata"
+            style="
+                width:100%;
+                margin-bottom:8px;
+            "
+        >
+
+            <source
+                src="${audioUrl}"
+                type="${escapeHtml(
+                    caseItem.audio.mimeType ||
+                    "audio/webm"
+                )}"
+            >
+
+            Your browser does not support
+            audio playback.
+
+        </audio>
+
+        <p
+            style="
+                font-size:12px;
+                margin:0;
+            "
+        >
+
+            File:
+            ${escapeHtml(
+                caseItem.audio.originalName ||
+                caseItem.audio.filename
+            )}
+
+            <br>
+
+            Size:
+            ${formatFileSize(
+                caseItem.audio.size
+            )}
+
+        </p>
+    `;
 }
 
 
@@ -1316,72 +1688,67 @@ async function openCaseDetail(caseId) {
 // STATUS BADGE
 // ============================================================
 
-function createStatusBadge(status) {
+function createStatusBadge(
+    status
+) {
 
-    let label = status;
+    const safeStatus =
+        String(
+            status || "NEW"
+        );
 
-    if (status === "NEW") {
-        label = "New";
-    }
 
-    if (status === "IN_REVIEW") {
-        label = "In Review";
-    }
-
-    if (status === "RESOLVED") {
-        label = "Resolved";
-    }
+    const className =
+        safeStatus
+            .toLowerCase()
+            .replace(
+                /[^a-z_]/g,
+                "_"
+            );
 
 
     return `
-        <span class="status-badge status-${status}">
-            ${escapeHtml(label)}
+        <span
+            class="badge ${className}"
+        >
+            ${escapeHtml(
+                safeStatus
+            )}
         </span>
     `;
 }
 
 
-// ============================================================
-// UPDATE DETAIL STATUS BADGE
-// ============================================================
+function updateDetailStatusBadge(
+    status
+) {
 
-function updateDetailStatusBadge() {
-
-    const statusElement =
-        document.getElementById(
-            "detail-status"
-        );
-
-    const badgeElement =
+    const badge =
         document.getElementById(
             "detail-status-badge"
         );
 
 
-    if (!statusElement || !badgeElement) {
-        return;
+    if (badge) {
+
+        badge.className =
+            `badge ${String(
+                status
+            ).toLowerCase()}`;
+
+        badge.innerText =
+            status;
     }
-
-
-    badgeElement.innerHTML =
-        createStatusBadge(
-            statusElement.value
-        );
 }
 
 
 // ============================================================
-// UPDATE CASE STATUS
+// UPDATE STATUS
 // ============================================================
 
 async function updateCaseStatus() {
 
-    if (!currentOrganizationCase) {
-
-        alert(
-            "No case selected."
-        );
-
+    if (!selectedCaseId) {
         return;
     }
 
@@ -1397,15 +1764,14 @@ async function updateCaseStatus() {
     }
 
 
-    const newStatus =
-        statusElement.value;
-
-
     try {
 
         const response =
             await fetch(
-                `${API_BASE_URL}/cases/${currentOrganizationCase.caseId}`,
+                `${API_BASE_URL}/cases/${encodeURIComponent(
+                    selectedCaseId
+                )}`,
+
                 {
                     method: "PATCH",
 
@@ -1414,134 +1780,87 @@ async function updateCaseStatus() {
                             "application/json"
                     },
 
-                    body: JSON.stringify({
-                        status: newStatus
-                    })
+                    body:
+                        JSON.stringify({
+                            status:
+                                statusElement.value
+                        })
                 }
             );
 
 
         const data =
-            await response.json();
-
-
-        console.log(
-            "Status update response:",
-            data
-        );
+            await readJsonResponse(
+                response
+            );
 
 
         if (!response.ok) {
 
             throw new Error(
                 data.message ||
-                "Status update failed."
+                "Could not update case."
             );
         }
 
 
-        currentOrganizationCase =
-            data.case;
+        updateDetailStatusBadge(
+            data.case.status
+        );
 
-
-        updateDetailStatusBadge();
 
         await loadCases();
 
 
         alert(
-            "Case status updated successfully."
+            "Case status updated."
         );
-
 
     } catch (error) {
 
         console.error(
-            "Status update error:",
             error
         );
 
         alert(
-            error.message ||
-            "Could not update case status."
+            error.message
         );
     }
 }
 
 
 // ============================================================
-// FILTER CASES
+// SEARCH
 // ============================================================
 
-function filterCases() {
+function filterCases(input) {
 
-    const searchInput =
-        document.getElementById(
-            "case-search"
+    const filter =
+        (
+            input.value || ""
+        ).toLowerCase();
+
+
+    const rows =
+        document.querySelectorAll(
+            "#case-table-body tr"
         );
 
 
-    if (!searchInput) {
-        return;
-    }
+    rows.forEach(row => {
 
-
-    const search =
-        searchInput.value
-            .trim()
-            .toLowerCase();
-
-
-    if (search === "") {
-
-        renderCasesTable(
-            organizationCases
-        );
-
-        return;
-    }
-
-
-    const filtered =
-        organizationCases.filter(
-            caseItem => {
-
-                return (
-                    caseItem.caseId
-                        .toLowerCase()
-                        .includes(search)
-
-                    ||
-
-                    caseItem.reportText
-                        .toLowerCase()
-                        .includes(search)
-
-                    ||
-
-                    (
-                        caseItem.assignedCounsellor ||
-                        ""
-                    )
-                    .toLowerCase()
-                    .includes(search)
-
-                    ||
-
-                    caseItem.status
-                        .toLowerCase()
-                        .includes(search)
-                );
-            }
-        );
-
-
-    renderCasesTable(filtered);
+        row.style.display =
+            row.innerText
+                .toLowerCase()
+                .includes(filter)
+                ? ""
+                : "none";
+    });
 }
 
 
 // ============================================================
-// COUNSELLOR MODAL
+// COUNSELLOR
 // ============================================================
 
 function openCounsellorModal() {
@@ -1551,8 +1870,11 @@ function openCounsellorModal() {
             "counsellor-modal"
         );
 
+
     if (modal) {
-        modal.style.display = "flex";
+
+        modal.style.display =
+            "flex";
     }
 }
 
@@ -1564,232 +1886,83 @@ function closeCounsellorModal() {
             "counsellor-modal"
         );
 
+
     if (modal) {
-        modal.style.display = "none";
+
+        modal.style.display =
+            "none";
     }
 }
 
 
-// ============================================================
-// ASSIGN COUNSELLOR
-// ============================================================
+function assignCounsellor(
+    name
+) {
 
-async function assignCounsellor(name) {
-
-    if (!currentOrganizationCase) {
-
-        alert(
-            "Please select a case first."
-        );
-
+    if (!selectedCaseId) {
         return;
     }
 
 
-    console.log(
-        "Assigning counsellor:",
-        name
-    );
+    fetch(
+        `${API_BASE_URL}/cases/${encodeURIComponent(
+            selectedCaseId
+        )}`,
 
+        {
+            method: "PATCH",
 
-    try {
+            headers: {
+                "Content-Type":
+                    "application/json"
+            },
 
-        const response =
-            await fetch(
-                `${API_BASE_URL}/cases/${currentOrganizationCase.caseId}`,
-                {
-                    method: "PATCH",
-
-                    headers: {
-                        "Content-Type":
-                            "application/json"
-                    },
-
-                    body: JSON.stringify({
-                        assignedCounsellor:
-                            name
-                    })
-                }
-            );
-
-
-        const data =
-            await response.json();
-
-
-        console.log(
-            "Counsellor assignment response:",
-            data
-        );
-
-
-        if (!response.ok) {
-
-            throw new Error(
-                data.message ||
-                "Could not assign counsellor."
-            );
+            body:
+                JSON.stringify({
+                    counsellor: name
+                })
         }
+    )
+
+        .then(
+            readJsonResponse
+        )
+
+        .then(data => {
+
+            if (!data.case) {
+
+                throw new Error(
+                    data.message ||
+                    "Could not assign counsellor."
+                );
+            }
 
 
-        currentOrganizationCase =
-            data.case;
+            const target =
+                document.getElementById(
+                    "assigned-counsellor-text"
+                );
 
 
-        const counsellorElement =
-            document.getElementById(
-                "assigned-counsellor"
+            if (target) {
+
+                target.innerText =
+                    data.case.counsellor;
+            }
+
+
+            closeCounsellorModal();
+        })
+
+        .catch(error => {
+
+            console.error(
+                error
             );
 
-
-        if (counsellorElement) {
-
-            counsellorElement.textContent =
-                name;
-        }
-
-
-        closeCounsellorModal();
-
-        await loadCases();
-
-
-        alert(
-            `${name} has been assigned to this case.`
-        );
-
-
-    } catch (error) {
-
-        console.error(
-            "Counsellor assignment error:",
-            error
-        );
-
-        alert(
-            error.message ||
-            "Could not assign counsellor."
-        );
-    }
-}
-
-
-// ============================================================
-// DATE FORMAT
-// ============================================================
-
-function formatDate(dateString) {
-
-    if (!dateString) {
-        return "-";
-    }
-
-
-    const date =
-        new Date(dateString);
-
-
-    if (Number.isNaN(date.getTime())) {
-        return dateString;
-    }
-
-
-    return date.toLocaleString();
-}
-
-
-// ============================================================
-// TEXT TRUNCATION
-// ============================================================
-
-function truncateText(
-    text,
-    maxLength
-) {
-
-    if (!text) {
-        return "";
-    }
-
-
-    if (text.length <= maxLength) {
-        return text;
-    }
-
-
-    return (
-        text.substring(
-            0,
-            maxLength
-        ) + "..."
-    );
-}
-
-
-// ============================================================
-// HTML ESCAPING
-// ============================================================
-
-function escapeHtml(value) {
-
-    if (value === null ||
-        value === undefined) {
-
-        return "";
-    }
-
-
-    return String(value)
-        .replace(
-            /&/g,
-            "&amp;"
-        )
-        .replace(
-            /</g,
-            "&lt;"
-        )
-        .replace(
-            />/g,
-            "&gt;"
-        )
-        .replace(
-            /"/g,
-            "&quot;"
-        )
-        .replace(
-            /'/g,
-            "&#039;"
-        );
-}
-
-
-// ============================================================
-// INITIALIZATION
-// ============================================================
-
-document.addEventListener(
-    "DOMContentLoaded",
-    () => {
-
-        console.log(
-            "SafeSupport JavaScript loaded."
-        );
-
-        console.log(
-            "Backend API:",
-            API_BASE_URL
-        );
-
-        // Hide recording status initially
-        const status =
-            document.getElementById(
-                "rec-status"
+            alert(
+                error.message
             );
-
-        if (status) {
-            status.style.display = "none";
-        }
-        // Initialize character count
-        updateCharCount();
-    }
-);
+        });
+}

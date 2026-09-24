@@ -1,293 +1,388 @@
 const express = require("express");
+const fs = require("fs");
+const path = require("path");
 const multer = require("multer");
+
 const router = express.Router();
-const upload = multer({
-    dest: "uploads/",
-    limits: {
-        fileSize: 10 * 1024 * 1024
+
+// ============================================================
+// UPLOAD DIRECTORY
+// ============================================================
+
+const uploadDirectory = path.join(__dirname, "..", "uploads");
+
+if (!fs.existsSync(uploadDirectory)) {
+    fs.mkdirSync(uploadDirectory, {
+        recursive: true
+    });
+}
+
+// ============================================================
+// MULTER CONFIGURATION
+// ============================================================
+
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, uploadDirectory);
+    },
+
+    filename: (req, file, cb) => {
+        const extension =
+            path.extname(file.originalname) || ".webm";
+
+        const safeExtension = extension
+            .toLowerCase()
+            .replace(/[^a-z0-9.]/g, "");
+
+        const filename =
+            `voice-${Date.now()}-${Math.random()
+                .toString(36)
+                .slice(2, 10)}${safeExtension}`;
+
+        cb(null, filename);
     }
 });
 
-// Temporary storage
-// Later, this will be replaced by the database.
-const cases = [];
+const upload = multer({
+    storage,
 
+    limits: {
+        fileSize: 25 * 1024 * 1024
+    }
+});
 
 // ============================================================
-// CREATE A NEW CASE
-// POST /api/cases
+// TEMPORARY CASE STORAGE
+// ============================================================
+
+const cases = [];
+
+// ============================================================
+// CASE ID
+// ============================================================
+
+function generateCaseId() {
+    let id;
+
+    do {
+        id = `CASE-${Math.floor(
+            1000 + Math.random() * 9000
+        )}`;
+    } while (
+        cases.some(caseItem => caseItem.caseId === id)
+    );
+
+    return id;
+}
+
+// ============================================================
+// CREATE CASE
 // ============================================================
 
 router.post("/", (req, res) => {
+    const {
+        statement = "",
+        source = "text",
+        language = "English"
+    } = req.body || {};
 
-    const { reportText } = req.body;
+    const cleanStatement =
+        String(statement).trim();
 
-    if (!reportText || reportText.trim() === "") {
-
+    // A voice-only report is allowed.
+    if (
+        !cleanStatement &&
+        source !== "voice"
+    ) {
         return res.status(400).json({
             success: false,
-            message: "Report text is required"
+            message:
+                "Report statement is required."
         });
-
     }
 
-
-    const caseId =
-        `CASE-${Math.floor(1000 + Math.random() * 9000)}`;
-
-
     const newCase = {
+        caseId: generateCaseId(),
 
-        caseId: caseId,
+        statement: cleanStatement,
 
-        reportText: reportText.trim(),
+        source,
+
+        language,
 
         status: "NEW",
 
-        assignedCounsellor: null,
+        counsellor: null,
 
-        createdAt: new Date().toISOString(),
+        assessment: null,
 
-        updatedAt: new Date().toISOString()
+        audio: null,
 
+        createdAt:
+            new Date().toISOString()
     };
-
 
     cases.push(newCase);
 
+    console.log(
+        `Case created: ${newCase.caseId}`
+    );
 
     res.status(201).json({
-
         success: true,
 
-        message: "Case created successfully",
+        message:
+            "Case created successfully.",
 
         case: newCase
-
     });
-
 });
-
 
 // ============================================================
 // GET ALL CASES
-// GET /api/cases
 // ============================================================
 
 router.get("/", (req, res) => {
-
     res.json({
-
         success: true,
-
-        cases: cases
-
+        cases
     });
-
 });
-
 
 // ============================================================
 // GET ONE CASE
-// GET /api/cases/:caseId
 // ============================================================
 
 router.get("/:caseId", (req, res) => {
-
-    const { caseId } = req.params;
-
-
-    const foundCase = cases.find(
-        (caseItem) =>
-            caseItem.caseId === caseId
-    );
-
+    const foundCase =
+        cases.find(
+            caseItem =>
+                caseItem.caseId ===
+                req.params.caseId
+        );
 
     if (!foundCase) {
-
         return res.status(404).json({
-
             success: false,
-
-            message: "Case not found"
-
+            message: "Case not found."
         });
-
     }
 
-
     res.json({
-
         success: true,
-
         case: foundCase
-
     });
-
 });
 
-
 // ============================================================
-// UPDATE A CASE
-// PATCH /api/cases/:caseId
+// UPDATE CASE
 // ============================================================
 
 router.patch("/:caseId", (req, res) => {
-
-    const { caseId } = req.params;
-
-
-    const foundCase = cases.find(
-        (caseItem) =>
-            caseItem.caseId === caseId
-    );
-
+    const foundCase =
+        cases.find(
+            caseItem =>
+                caseItem.caseId ===
+                req.params.caseId
+        );
 
     if (!foundCase) {
-
         return res.status(404).json({
-
             success: false,
-
-            message: "Case not found"
-
+            message: "Case not found."
         });
-
     }
 
-
-    const {
-        status,
-        assignedCounsellor
-    } = req.body;
-
-
-    // Update status if provided
-    if (status !== undefined) {
-
-        const allowedStatuses = [
-            "NEW",
-            "IN_REVIEW",
-            "RESOLVED"
-        ];
-
-
-        if (!allowedStatuses.includes(status)) {
-
-            return res.status(400).json({
-
-                success: false,
-
-                message:
-                    "Invalid status. Allowed values: NEW, IN_REVIEW, RESOLVED"
-
-            });
-
-        }
-
-
-        foundCase.status = status;
-
+    if (
+        req.body.status !== undefined
+    ) {
+        foundCase.status =
+            req.body.status;
     }
 
-
-    // Update counsellor if provided
-    if (assignedCounsellor !== undefined) {
-
-        foundCase.assignedCounsellor =
-            assignedCounsellor;
-
+    if (
+        req.body.counsellor !== undefined
+    ) {
+        foundCase.counsellor =
+            req.body.counsellor;
     }
-
-
-    // Update timestamp
-    foundCase.updatedAt =
-        new Date().toISOString();
-
 
     res.json({
-
         success: true,
 
-        message: "Case updated successfully",
+        message:
+            "Case updated successfully.",
 
         case: foundCase
-
     });
-
 });
 
 // ============================================================
 // AI ASSESSMENT PLACEHOLDER
-// POST /api/cases/:caseId/assessment
 // ============================================================
 
-router.post("/:caseId/assessment", (req, res) => {
+router.post(
+    "/:caseId/assessment",
+    (req, res) => {
 
-    const { caseId } = req.params;
+        const foundCase =
+            cases.find(
+                caseItem =>
+                    caseItem.caseId ===
+                    req.params.caseId
+            );
 
-    const foundCase = cases.find(
-        (caseItem) =>
-            caseItem.caseId === caseId
-    );
-
-    if (!foundCase) {
-
-        return res.status(404).json({
-            success: false,
-            message: "Case not found"
-        });
-
-    }
-
-    // Temporary placeholder.
-    // Real AI processing will be connected later.
-
-    const assessment = {
-        status: "PENDING",
-        message: "AI assessment has not been processed yet"
-    };
-
-    res.json({
-        success: true,
-        caseId: caseId,
-        assessment: assessment
-    });
-
-});
-// AUDIO UPLOAD
-router.post("/:caseId/audio", upload.single("audio"), (req, res) => {
-    const { caseId } = req.params;
-
-    const foundCase = cases.find(
-        (caseItem) => caseItem.caseId === caseId
-    );
-
-    if (!foundCase) {
-        return res.status(404).json({
-            success: false,
-            message: "Case not found"
-        });
-    }
-
-    if (!req.file) {
-        return res.status(400).json({
-            success: false,
-            message: "Audio file is required"
-        });
-    }
-
-    res.status(201).json({
-        success: true,
-        message: "Audio received successfully",
-        caseId: caseId,
-        audio: {
-            filename: req.file.filename,
-            originalName: req.file.originalname,
-            mimeType: req.file.mimetype,
-            size: req.file.size
+        if (!foundCase) {
+            return res.status(404).json({
+                success: false,
+                message:
+                    "Case not found."
+            });
         }
-    });
-});
+
+        foundCase.assessment = {
+            status:
+                "PENDING_AI_INTEGRATION",
+
+            message:
+                "AI assessment endpoint is ready for model integration.",
+
+            updatedAt:
+                new Date().toISOString()
+        };
+
+        res.json({
+            success: true,
+
+            assessment:
+                foundCase.assessment
+        });
+    }
+);
+
+// ============================================================
+// UPLOAD AUDIO
+// ============================================================
+
+router.post(
+    "/:caseId/audio",
+    upload.single("audio"),
+    (req, res) => {
+
+        const foundCase =
+            cases.find(
+                caseItem =>
+                    caseItem.caseId ===
+                    req.params.caseId
+            );
+
+        if (!foundCase) {
+
+            if (req.file) {
+                fs.unlink(
+                    req.file.path,
+                    () => {}
+                );
+            }
+
+            return res.status(404).json({
+                success: false,
+                message:
+                    "Case not found."
+            });
+        }
+
+        if (!req.file) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Audio file is required."
+            });
+        }
+
+        foundCase.audio = {
+            filename:
+                req.file.filename,
+
+            originalName:
+                req.file.originalname,
+
+            mimeType:
+                req.file.mimetype,
+
+            size:
+                req.file.size,
+
+            uploadedAt:
+                new Date().toISOString()
+        };
+
+        console.log(
+            `Audio uploaded for ${foundCase.caseId}: ${req.file.filename}`
+        );
+
+        res.status(201).json({
+            success: true,
+
+            message:
+                "Audio uploaded successfully.",
+
+            audio:
+                foundCase.audio
+        });
+    }
+);
+
+// ============================================================
+// PLAY / STREAM AUDIO
+// ============================================================
+
+router.get(
+    "/:caseId/audio",
+    (req, res) => {
+
+        const foundCase =
+            cases.find(
+                caseItem =>
+                    caseItem.caseId ===
+                    req.params.caseId
+            );
+
+        if (!foundCase) {
+            return res.status(404).json({
+                success: false,
+                message:
+                    "Case not found."
+            });
+        }
+
+        if (
+            !foundCase.audio ||
+            !foundCase.audio.filename
+        ) {
+            return res.status(404).json({
+                success: false,
+                message:
+                    "No audio recording found for this case."
+            });
+        }
+
+        const audioPath =
+            path.join(
+                uploadDirectory,
+                foundCase.audio.filename
+            );
+
+        if (!fs.existsSync(audioPath)) {
+            return res.status(404).json({
+                success: false,
+                message:
+                    "Audio file is missing from server."
+            });
+        }
+
+        res.sendFile(audioPath);
+    }
+);
 
 module.exports = router;
