@@ -1,40 +1,29 @@
-
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
 require("dotenv").config();
 
-const casesRoutes = require("./routes/cases");
-
 const connectDB = require("./db");
-
-connectDB();
-
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5004;
+
+
 
 app.use(cors());
 app.use(express.json());
 
-// Serve uploaded audio files
-app.use(
-    "/uploads",
-    express.static(path.join(__dirname, "uploads"))
-);
+connectDB();
 
-// Case API
-app.use("/api/cases", casesRoutes);
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+app.use(express.static(path.resolve(__dirname, "../frontend")));
 
-// Health check
-app.get("/api/health", (req, res) => {
-    res.json({
-        success: true,
-        message: "NIVARAN backend is running"
-    });
+app.use('/api/cases', require('./routes/cases'));
+app.use('/api/ngo', require('./routes/ngo'));
+
+app.get("/", (req, res) => {
+    res.sendFile(path.resolve(__dirname, "../frontend/index.html"));
 });
 
 app.listen(PORT, () => {
-    console.log(
-        `NIVARAN backend running on http://localhost:${PORT}`
-    );
+    console.log(`NIVARAN backend running on http://localhost:${PORT}`);
 });

@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>NIVARAN - NGO Dashboard</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container" style="max-width: 900px;">
+        <h2>Dashboard: <span id="dash-ngo-name">NGO</span></h2>
+        <button onclick="localStorage.clear(); window.location.href='org.html';" class="btn secondary" style="width: auto; padding: 5px 15px; float: right;">Logout</button>
+
+        <h3>Incoming Grievance Reports</h3>
+        <div id="cases-list">Loading cases...</div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>

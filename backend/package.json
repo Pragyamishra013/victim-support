@@ -1,28 +1,15 @@
 {
-  "name": "victim-support",
+  "name": "nivaran-backend",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node server.js"
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/Pragyamishra013/victim-support.git"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
-  "bugs": {
-    "url": "https://github.com/Pragyamishra013/victim-support/issues"
-  },
-  "homepage": "https://github.com/Pragyamishra013/victim-support#readme",
   "dependencies": {
-    "cors": "^2.8.6",
-    "dotenv": "^18.0.3",
-    "express": "^5.2.1",
-    "mongoose": "^9.10.2",
-    "multer": "^2.4.0"
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "mongoose": "^8.3.1",
+    "multer": "^1.4.5-lts.1"
   }
 }
