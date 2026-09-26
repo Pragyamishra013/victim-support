@@ -2,6 +2,7 @@ const express = require("express");
 const fs = require("fs");
 const path = require("path");
 const multer = require("multer");
+const Case = require("../models/Case");
 
 const router = express.Router();
 
@@ -52,26 +53,22 @@ const upload = multer({
 });
 
 // ============================================================
-// TEMPORARY CASE STORAGE
+// UNIQUE CASE ID GENERATOR (MongoDB checking)
 // ============================================================
 
-const cases = [];
-
-// ============================================================
-// CASE ID
-// ============================================================
-
-function generateCaseId() {
+async function generateCaseId() {
     let id;
+    let exists = true;
 
-    do {
+    while (exists) {
         id = `CASE-${Math.floor(
             1000 + Math.random() * 9000
         )}`;
-    } while (
-        cases.some(caseItem => caseItem.caseId === id)
-    );
-
+        const found = await Case.findOne({ caseId: id });
+        if (!found) {
+            exists = false;
+        }
+    }
     return id;
 }
 
@@ -79,186 +76,161 @@ function generateCaseId() {
 // CREATE CASE
 // ============================================================
 
-router.post("/", (req, res) => {
-    const {
-        statement = "",
-        source = "text",
-        language = "English"
-    } = req.body || {};
+router.post("/", async (req, res) => {
+    try {
+        const {
+            statement = "",
+            source = "text",
+            language = "English"
+        } = req.body || {};
 
-    const cleanStatement =
-        String(statement).trim();
+        const cleanStatement = String(statement).trim();
 
-    // A voice-only report is allowed.
-    if (
-        !cleanStatement &&
-        source !== "voice"
-    ) {
-        return res.status(400).json({
-            success: false,
-            message:
-                "Report statement is required."
+        if (
+            !cleanStatement &&
+            source !== "voice"
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: "Report statement is required."
+            });
+        }
+
+        const newCaseId = await generateCaseId();
+
+        const newCase = new Case({
+            caseId: newCaseId,
+            statement: cleanStatement,
+            source,
+            language,
+            status: "NEW",
+            counsellor: null,
+            assessment: null,
+            audio: null,
+            createdAt: new Date().toISOString()
         });
+
+        await newCase.save();
+
+        console.log(`Case created in DB: ${newCase.caseId}`);
+
+        res.status(201).json({
+            success: true,
+            message: "Case created successfully.",
+            case: newCase
+        });
+    } catch (error) {
+        console.error("Error creating case:", error);
+        res.status(500).json({ success: false, message: "Internal server error" });
     }
-
-    const newCase = {
-        caseId: generateCaseId(),
-
-        statement: cleanStatement,
-
-        source,
-
-        language,
-
-        status: "NEW",
-
-        counsellor: null,
-
-        assessment: null,
-
-        audio: null,
-
-        createdAt:
-            new Date().toISOString()
-    };
-
-    cases.push(newCase);
-
-    console.log(
-        `Case created: ${newCase.caseId}`
-    );
-
-    res.status(201).json({
-        success: true,
-
-        message:
-            "Case created successfully.",
-
-        case: newCase
-    });
 });
 
 // ============================================================
 // GET ALL CASES
 // ============================================================
 
-router.get("/", (req, res) => {
-    res.json({
-        success: true,
-        cases
-    });
+router.get("/", async (req, res) => {
+    try {
+        const cases = await Case.find().sort({ createdAt: -1 });
+        res.json({
+            success: true,
+            cases
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: "Internal server error" });
+    }
 });
 
 // ============================================================
 // GET ONE CASE
 // ============================================================
 
-router.get("/:caseId", (req, res) => {
-    const foundCase =
-        cases.find(
-            caseItem =>
-                caseItem.caseId ===
-                req.params.caseId
-        );
+router.get("/:caseId", async (req, res) => {
+    try {
+        const foundCase = await Case.findOne({ caseId: req.params.caseId });
 
-    if (!foundCase) {
-        return res.status(404).json({
-            success: false,
-            message: "Case not found."
+        if (!foundCase) {
+            return res.status(404).json({
+                success: false,
+                message: "Case not found."
+            });
+        }
+
+        res.json({
+            success: true,
+            case: foundCase
         });
+    } catch (error) {
+        res.status(500).json({ success: false, message: "Internal server error" });
     }
-
-    res.json({
-        success: true,
-        case: foundCase
-    });
 });
 
 // ============================================================
 // UPDATE CASE
 // ============================================================
 
-router.patch("/:caseId", (req, res) => {
-    const foundCase =
-        cases.find(
-            caseItem =>
-                caseItem.caseId ===
-                req.params.caseId
-        );
+router.patch("/:caseId", async (req, res) => {
+    try {
+        const foundCase = await Case.findOne({ caseId: req.params.caseId });
 
-    if (!foundCase) {
-        return res.status(404).json({
-            success: false,
-            message: "Case not found."
+        if (!foundCase) {
+            return res.status(404).json({
+                success: false,
+                message: "Case not found."
+            });
+        }
+
+        if (req.body.status !== undefined) {
+            foundCase.status = req.body.status;
+        }
+
+        if (req.body.counsellor !== undefined) {
+            foundCase.counsellor = req.body.counsellor;
+        }
+
+        await foundCase.save();
+
+        res.json({
+            success: true,
+            message: "Case updated successfully.",
+            case: foundCase
         });
+    } catch (error) {
+        res.status(500).json({ success: false, message: "Internal server error" });
     }
-
-    if (
-        req.body.status !== undefined
-    ) {
-        foundCase.status =
-            req.body.status;
-    }
-
-    if (
-        req.body.counsellor !== undefined
-    ) {
-        foundCase.counsellor =
-            req.body.counsellor;
-    }
-
-    res.json({
-        success: true,
-
-        message:
-            "Case updated successfully.",
-
-        case: foundCase
-    });
 });
 
 // ============================================================
 // AI ASSESSMENT PLACEHOLDER
 // ============================================================
 
-router.post(
-    "/:caseId/assessment",
-    (req, res) => {
-
-        const foundCase =
-            cases.find(
-                caseItem =>
-                    caseItem.caseId ===
-                    req.params.caseId
-            );
+router.post("/:caseId/assessment", async (req, res) => {
+    try {
+        const foundCase = await Case.findOne({ caseId: req.params.caseId });
 
         if (!foundCase) {
             return res.status(404).json({
                 success: false,
-                message:
-                    "Case not found."
+                message: "Case not found."
             });
         }
 
         foundCase.assessment = {
-            status:
-                "PENDING_AI_INTEGRATION",
-
-            message:
-                "AI assessment endpoint is ready for model integration.",
-
-            updatedAt:
-                new Date().toISOString()
+            status: "PENDING_AI_INTEGRATION",
+            message: "AI assessment endpoint is ready for model integration.",
+            updatedAt: new Date().toISOString()
         };
+
+        await foundCase.save();
 
         res.json({
             success: true,
-
-            assessment:
-                foundCase.assessment
+            assessment: foundCase.assessment
         });
+    } catch (error) {
+        res.status(500).json({ success: false, message: "Internal server error" });
     }
-);
+});
 
 // ============================================================
 // UPLOAD AUDIO
@@ -267,69 +239,53 @@ router.post(
 router.post(
     "/:caseId/audio",
     upload.single("audio"),
-    (req, res) => {
+    async (req, res) => {
+        try {
+            const foundCase = await Case.findOne({ caseId: req.params.caseId });
 
-        const foundCase =
-            cases.find(
-                caseItem =>
-                    caseItem.caseId ===
-                    req.params.caseId
-            );
+            if (!foundCase) {
+                if (req.file) {
+                    fs.unlink(req.file.path, () => {});
+                }
 
-        if (!foundCase) {
-
-            if (req.file) {
-                fs.unlink(
-                    req.file.path,
-                    () => {}
-                );
+                return res.status(404).json({
+                    success: false,
+                    message: "Case not found."
+                });
             }
 
-            return res.status(404).json({
-                success: false,
-                message:
-                    "Case not found."
+            if (!req.file) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Audio file is required."
+                });
+            }
+
+            foundCase.audio = {
+                filename: req.file.filename,
+                originalName: req.file.originalname,
+                mimeType: req.file.mimetype,
+                size: req.file.size,
+                uploadedAt: new Date().toISOString()
+            };
+
+            await foundCase.save();
+
+            console.log(
+                `Audio uploaded for ${foundCase.caseId}: ${req.file.filename}`
+            );
+
+            res.status(201).json({
+                success: true,
+                message: "Audio uploaded successfully.",
+                audio: foundCase.audio
             });
+        } catch (error) {
+            if (req.file) {
+                fs.unlink(req.file.path, () => {});
+            }
+            res.status(500).json({ success: false, message: "Internal server error" });
         }
-
-        if (!req.file) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "Audio file is required."
-            });
-        }
-
-        foundCase.audio = {
-            filename:
-                req.file.filename,
-
-            originalName:
-                req.file.originalname,
-
-            mimeType:
-                req.file.mimetype,
-
-            size:
-                req.file.size,
-
-            uploadedAt:
-                new Date().toISOString()
-        };
-
-        console.log(
-            `Audio uploaded for ${foundCase.caseId}: ${req.file.filename}`
-        );
-
-        res.status(201).json({
-            success: true,
-
-            message:
-                "Audio uploaded successfully.",
-
-            audio:
-                foundCase.audio
-        });
     }
 );
 
@@ -337,22 +293,14 @@ router.post(
 // PLAY / STREAM AUDIO
 // ============================================================
 
-router.get(
-    "/:caseId/audio",
-    (req, res) => {
-
-        const foundCase =
-            cases.find(
-                caseItem =>
-                    caseItem.caseId ===
-                    req.params.caseId
-            );
+router.get("/:caseId/audio", async (req, res) => {
+    try {
+        const foundCase = await Case.findOne({ caseId: req.params.caseId });
 
         if (!foundCase) {
             return res.status(404).json({
                 success: false,
-                message:
-                    "Case not found."
+                message: "Case not found."
             });
         }
 
@@ -362,27 +310,26 @@ router.get(
         ) {
             return res.status(404).json({
                 success: false,
-                message:
-                    "No audio recording found for this case."
+                message: "No audio recording found for this case."
             });
         }
 
-        const audioPath =
-            path.join(
-                uploadDirectory,
-                foundCase.audio.filename
-            );
+        const audioPath = path.join(
+            uploadDirectory,
+            foundCase.audio.filename
+        );
 
         if (!fs.existsSync(audioPath)) {
             return res.status(404).json({
                 success: false,
-                message:
-                    "Audio file is missing from server."
+                message: "Audio file is missing from server."
             });
         }
 
         res.sendFile(audioPath);
+    } catch (error) {
+        res.status(500).json({ success: false, message: "Internal server error" });
     }
-);
+});
 
 module.exports = router;
