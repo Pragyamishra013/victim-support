@@ -1,32 +1,95 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>NIVARAN - Victim Support</title>
-    <link rel="stylesheet" href="style.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NIVARAN - Secure Support Portal</title>
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="container">
-        <a href="index.html">&larr; Back to Home</a>
-        <h2>We are here to listen.</h2>
-        <div id="error-banner" style="color: red; margin-bottom: 10px; font-weight: bold;"></div>
+<main class="container">
+    <a class="back-link" href="index.html">← Back to Portal</a>
 
-        <form id="victim-form">
-            <input type="text" id="v-name" placeholder="Your Name" required>
-            <input type="number" id="v-age" placeholder="Age" required>
-            <input type="text" id="v-gender" placeholder="Gender" required>
-            <input type="email" id="v-email" placeholder="Email (Optional)">
-            <input type="text" id="v-address" placeholder="Location / Address" required>
+    <section id="screen-1" class="screen active">
+        <div class="header"><div class="logo">NIVARAN</div><span class="secure-label">Secure reporting</span></div>
+        <h1>We are here to listen.</h1>
+        <p>Your report will be shared with the organization that provided this secure link.</p>
+        <div id="ngo-name-box" class="privacy-note">Checking your secure reporting link...</div>
+        <div class="consent-row">
+            <input id="consent-checkbox" type="checkbox">
+            <label for="consent-checkbox">I understand and agree to share my information and report for support and review.</label>
+        </div>
+        <button id="consent-btn" class="btn" type="button" disabled>Continue</button>
+    </section>
 
-            <textarea id="v-statement" rows="4" placeholder="Share what happened in a way that feels comfortable for you..." required></textarea>
-
-            <label>Upload Audio (Optional):</label>
-            <input type="file" id="v-audio" accept="audio/*">
-
-            <button type="submit" class="btn primary">Submit Report Securely</button>
+    <section id="screen-2" class="screen">
+        <div class="progress">1. Consent <span>→</span> <strong>2. Details</strong> <span>→</span> 3. Report <span>→</span> 4. Review</div>
+        <h1>Your information</h1>
+        <p>These details help the organization understand and follow up on your report.</p>
+        <form id="victim-details-form">
+            <div class="form-group"><label for="v-name">Name</label><input id="v-name" required></div>
+            <div class="two-col">
+                <div class="form-group"><label for="v-age">Age</label><input id="v-age" type="number" min="1" max="120" required></div>
+                <div class="form-group"><label for="v-gender">Gender</label><input id="v-gender" required></div>
+            </div>
+            <div class="form-group"><label for="v-phone">Phone number</label><input id="v-phone" type="tel" required></div>
+            <div class="form-group"><label for="v-address">Address</label><input id="v-address" required></div>
+            <div class="form-group"><label for="v-email">Email <span class="muted">(optional)</span></label><input id="v-email" type="email"></div>
+            <button class="btn" type="submit">Continue to Report</button>
+            <button class="btn btn-outline" type="button" id="details-back">Back</button>
         </form>
-        <div id="success-msg" style="display:none; color: green; margin-top: 15px; font-weight: bold;"></div>
-    </div>
-    <script src="script.js"></script>
+    </section>
+
+    <section id="screen-3" class="screen">
+        <div class="progress">1. Consent <span>→</span> 2. Details <span>→</span> <strong>3. Report</strong> <span>→</span> 4. Review</div>
+        <h1>Choose one way to report</h1>
+        <p>Please choose only one method. You can switch methods before continuing.</p>
+        <div id="method-error" class="error-msg"></div>
+        <div class="method-grid">
+            <button class="method-card" type="button" data-method="text"><strong>Write a report</strong><span>Describe what happened in your own words.</span></button>
+            <button class="method-card" type="button" data-method="record"><strong>Record your voice</strong><span>Record directly in this browser.</span></button>
+            <button class="method-card" type="button" data-method="upload"><strong>Upload audio</strong><span>Use an existing audio recording.</span></button>
+        </div>
+        <div id="method-text" class="method-panel">
+            <textarea id="report-text" maxlength="5000" placeholder="Describe your situation..."></textarea>
+            <div id="char-counter" class="char-count">0 / 5000</div>
+        </div>
+        <div id="method-record" class="method-panel hidden">
+            <button id="record-btn" class="record-btn" type="button">● Start recording</button>
+            <div id="record-status" class="record-status"></div>
+            <audio id="record-preview" controls class="audio-preview hidden"></audio>
+        </div>
+        <div id="method-upload" class="method-panel hidden">
+            <label class="upload-box" for="audio-file">Choose an audio file</label>
+            <input id="audio-file" type="file" accept="audio/*" class="hidden">
+            <div id="upload-name" class="muted"></div>
+        </div>
+        <button class="btn" id="report-continue" type="button">Continue to Review</button>
+        <button class="btn btn-outline" id="report-back" type="button">Back</button>
+    </section>
+
+    <section id="screen-4" class="screen">
+        <div class="progress">1. Consent <span>→</span> 2. Details <span>→</span> 3. Report <span>→</span> <strong>4. Review</strong></div>
+        <h1>Review your report</h1>
+        <p>Check the information before submitting. You can edit a written report here.</p>
+        <div class="review-card">
+            <div class="review-label">Transcript / report</div>
+            <div id="transcription-status" class="privacy-note hidden"></div>
+            <textarea id="review-text" maxlength="5000"></textarea>
+            <div id="review-audio-wrap" class="hidden"><div class="review-label">Original audio</div><audio id="review-audio" controls class="audio-preview"></audio></div>
+        </div>
+        <button id="submit-btn" class="btn" type="button">Submit Report Securely</button>
+        <button id="review-back" class="btn btn-outline" type="button">Edit Report</button>
+    </section>
+
+    <section id="screen-5" class="screen center-content">
+        <div class="spinner"></div><h1>Submitting securely...</h1><p>Please keep this page open.</p>
+    </section>
+
+    <section id="screen-6" class="screen center-content">
+        <div class="success-mark">✓</div><h1>Report submitted</h1><p>Your report has been sent to the organization.</p><div class="case-box" id="case-id-display">—</div><p class="muted">Keep this case ID for your records.</p><button class="btn" id="done-btn" type="button">Done</button>
+    </section>
+</main>
+<script src="script.js"></script>
 </body>
 </html>

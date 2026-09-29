@@ -1,146 +1,289 @@
 const API_BASE = "http://localhost:5004/api";
 
-document.addEventListener("DOMContentLoaded", () => {
-    const loginForm = document.getElementById("login-form");
-    if (loginForm) {
-        loginForm.addEventListener("submit", async (e) => {
-            e.preventDefault();
-            const email = document.getElementById("login-email").value;
-            const password = document.getElementById("login-password").value;
+let ngoSlug = "";
+let reportMethod = "";
+let recordedBlob = null;
+let recordedUrl = null;
+let uploadedFile = null;
+let recorder = null;
+let recorderStream = null;
+let chunks = [];
+let organizationCases = [];
+let selectedCaseId = null;
 
-            try {
-                const res = await fetch(`${API_BASE}/ngo/login`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ email, password })
-                });
-                const data = await res.json();
-                if (data.success) {
-                    localStorage.setItem("ngoId", data.ngoId);
-                    localStorage.setItem("ngoName", data.ngoName);
-                    localStorage.setItem("uniqueLink", data.uniqueLink);
-                    showNgoLinks(data);
-                } else {
-                    alert(data.message);
-                }
-            } catch (err) {
-                alert("Login error: " + err.message);
-            }
-        });
+function $(id) { return document.getElementById(id); }
+function showScreen(number) {
+    document.querySelectorAll(".screen").forEach(s => s.classList.remove("active"));
+    const target = $("screen-" + number);
+    if (target) target.classList.add("active");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+}
+function escapeHtml(value) {
+    return String(value ?? "").replace(/[&<>'"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#039;","\"":"&quot;"}[c]));
+}
+function setError(id, message) { const el = $(id); if (!el) return; el.textContent = message || ""; }
+
+async function json(response) {
+    const text = await response.text();
+    try { return text ? JSON.parse(text) : {}; } catch { return { success:false, message:text || `HTTP ${response.status}` }; }
+}
+
+function setupVictim() {
+    if (!$("consent-btn")) return;
+    ngoSlug = new URLSearchParams(location.search).get("ngo") || "";
+    if (!ngoSlug) {
+        $("ngo-name-box").textContent = "This page must be opened from the unique reporting link provided by an organization.";
+        $("consent-checkbox").disabled = true;
+        return;
     }
-
-    const registerForm = document.getElementById("register-form");
-    if (registerForm) {
-        registerForm.addEventListener("submit", async (e) => {
-            e.preventDefault();
-            const ngoName = document.getElementById("reg-name").value;
-            const email = document.getElementById("reg-email").value;
-            const password = document.getElementById("reg-password").value;
-
-            try {
-                const res = await fetch(`${API_BASE}/ngo/register`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ ngoName, email, password })
-                });
-                const data = await res.json();
-                if (data.success) {
-                    localStorage.setItem("ngoId", data.ngoId);
-                    localStorage.setItem("ngoName", data.ngoName);
-                    localStorage.setItem("uniqueLink", data.uniqueLink);
-                    showNgoLinks(data);
-                } else {
-                    alert(data.message);
-                }
-            } catch (err) {
-                alert("Registration error: " + err.message);
-            }
+    fetch(`${API_BASE}/ngo/by-slug/${encodeURIComponent(ngoSlug)}`)
+        .then(json)
+        .then(data => {
+            if (!data.success) throw new Error(data.message || "Invalid reporting link.");
+            $("ngo-name-box").textContent = `Secure reporting link for ${data.ngo.name}.`;
+        })
+        .catch(error => {
+            $("ngo-name-box").textContent = error.message;
+            $("consent-checkbox").disabled = true;
         });
-    }
 
-    function showNgoLinks(data) {
-        document.getElementById("auth-forms").style.display = "none";
-        document.getElementById("ngo-dashboard-link").style.display = "block";
-        document.getElementById("ngo-title").innerText = data.ngoName;
-        document.getElementById("unique-link-display").value = data.uniqueLink;
-        document.getElementById("goto-dash").onclick = () => {
-            window.location.href = "dashboard.html";
+    $("consent-checkbox").addEventListener("change", () => {
+        $("consent-btn").disabled = !$("consent-checkbox").checked;
+    });
+    $("consent-btn").addEventListener("click", () => showScreen(2));
+    $("details-back").addEventListener("click", () => showScreen(1));
+    $("victim-details-form").addEventListener("submit", e => { e.preventDefault(); showScreen(3); });
+
+    document.querySelectorAll(".method-card").forEach(card => card.addEventListener("click", () => selectMethod(card.dataset.method)));
+    $("report-text").addEventListener("input", () => $("char-counter").textContent = `${$("report-text").value.length} / 5000`);
+    $("record-btn").addEventListener("click", toggleRecording);
+    $("audio-file").addEventListener("change", handleUpload);
+    $("report-continue").addEventListener("click", continueToReview);
+    $("report-back").addEventListener("click", () => showScreen(2));
+    $("review-back").addEventListener("click", () => showScreen(3));
+    $("submit-btn").addEventListener("click", submitVictimReport);
+    $("done-btn").addEventListener("click", () => location.reload());
+    selectMethod("text");
+}
+
+function selectMethod(method) {
+    reportMethod = method;
+    document.querySelectorAll(".method-card").forEach(c => c.classList.toggle("selected", c.dataset.method === method));
+    $("method-text").classList.toggle("hidden", method !== "text");
+    $("method-record").classList.toggle("hidden", method !== "record");
+    $("method-upload").classList.toggle("hidden", method !== "upload");
+    setError("method-error", "");
+    if (method !== "record" && recorder && recorder.state !== "inactive") stopRecording();
+}
+
+function mimeType() {
+    const types = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/ogg"];
+    return types.find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || "";
+}
+
+async function toggleRecording() {
+    if (recorder && recorder.state === "recording") { stopRecording(); return; }
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+        setError("method-error", "Your browser does not support microphone recording."); return;
+    }
+    try {
+        recorderStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        chunks = [];
+        recordedBlob = null;
+        const type = mimeType();
+        recorder = type ? new MediaRecorder(recorderStream, { mimeType:type }) : new MediaRecorder(recorderStream);
+        recorder.ondataavailable = e => { if (e.data?.size) chunks.push(e.data); };
+        recorder.onstop = () => {
+            const finalType = recorder.mimeType || type || "audio/webm";
+            recordedBlob = new Blob(chunks, { type:finalType });
+            if (recordedUrl) URL.revokeObjectURL(recordedUrl);
+            recordedUrl = URL.createObjectURL(recordedBlob);
+            $("record-preview").src = recordedUrl;
+            $("record-preview").classList.remove("hidden");
+            $("record-status").textContent = "Recording ready. You can record again if needed.";
+            cleanupRecorder();
         };
+        recorder.onerror = () => { cleanupRecorder(); setError("method-error", "Recording failed. Please try again."); };
+        recorder.start(250);
+        $("record-btn").textContent = "■ Stop recording";
+        $("record-btn").classList.add("recording");
+        $("record-status").textContent = "Recording...";
+    } catch (error) {
+        cleanupRecorder();
+        setError("method-error", error.name === "NotAllowedError" ? "Microphone permission was denied. Allow microphone access and try again." : "Could not start recording.");
     }
+}
+function stopRecording() { if (recorder && recorder.state !== "inactive") recorder.stop(); }
+function cleanupRecorder() {
+    recorderStream?.getTracks().forEach(t => t.stop());
+    recorderStream = null; recorder = null;
+    $("record-btn").textContent = "● Start recording";
+    $("record-btn").classList.remove("recording");
+}
+function handleUpload() {
+    uploadedFile = $("audio-file").files?.[0] || null;
+    $("upload-name").textContent = uploadedFile ? `${uploadedFile.name} selected` : "";
+}
+function selectedAudio() {
+    if (reportMethod === "record" && recordedBlob) {
+        const ext = recordedBlob.type.includes("ogg") ? "ogg" : recordedBlob.type.includes("mp4") ? "mp4" : "webm";
+        return new File([recordedBlob], `voice-report.${ext}`, { type: recordedBlob.type || "audio/webm" });
+    }
+    if (reportMethod === "upload") return uploadedFile;
+    return null;
+}
+async function continueToReview() {
+    const text = $("report-text").value.trim();
+    const audio = selectedAudio();
+    if (reportMethod === "text" && !text) return setError("method-error", "Please write your report before continuing.");
+    if (reportMethod === "record" && !audio) return setError("method-error", "Please make a recording before continuing.");
+    if (reportMethod === "upload" && !audio) return setError("method-error", "Please choose an audio file before continuing.");
 
-    const victimForm = document.getElementById("victim-form");
-    if (victimForm) {
-        const urlParams = new URLSearchParams(window.location.search);
-        const ngoSlug = urlParams.get("ngo");
+    setError("method-error", "");
+    const continueButton = $("report-continue");
+    continueButton.disabled = true;
 
-        if (!ngoSlug) {
-            document.getElementById("error-banner").innerText = "Invalid or missing NGO reporting link!";
-            victimForm.style.display = "none";
-        }
+    try {
+        let finalText = text;
+        const status = $("transcription-status");
 
-        victimForm.addEventListener("submit", async (e) => {
-            e.preventDefault();
-            const formData = new FormData();
-            formData.append("ngoSlug", ngoSlug);
-            formData.append("name", document.getElementById("v-name").value);
-            formData.append("age", document.getElementById("v-age").value);
-            formData.append("gender", document.getElementById("v-gender").value);
-            formData.append("email", document.getElementById("v-email").value);
-            formData.append("address", document.getElementById("v-address").value);
-            formData.append("statement", document.getElementById("v-statement").value);
+        if (audio) {
+            status.textContent = "Converting your audio to text... Please wait.";
+            status.classList.remove("hidden");
 
-            const audioFile = document.getElementById("v-audio").files[0];
-            if (audioFile) formData.append("audio", audioFile);
+            const form = new FormData();
+            form.append("audio", audio);
+            const response = await fetch(`${API_BASE}/cases/transcribe`, { method: "POST", body: form });
+            const data = await json(response);
 
-            try {
-                const res = await fetch(`${API_BASE}/cases/submit`, {
-                    method: "POST",
-                    body: formData
-                });
-                const data = await res.json();
-                if (data.success) {
-                    victimForm.style.display = "none";
-                    const succ = document.getElementById("success-msg");
-                    succ.style.display = "block";
-                    succ.innerText = `Report submitted successfully! Case ID: ${data.caseId}`;
-                } else {
-                    alert(data.message);
-                }
-            } catch (err) {
-                alert("Submission error: " + err.message);
+            if (!response.ok || !data.success) {
+                throw new Error(data.message || data.error || "Could not transcribe the audio.");
             }
-        });
-    }
 
-    const casesList = document.getElementById("cases-list");
-    if (casesList) {
-        const ngoId = localStorage.getItem("ngoId");
-        const ngoName = localStorage.getItem("ngoName");
-        if (!ngoId) {
-            window.location.href = "org.html";
-            return;
+            const transcript = String(data.transcript || "").trim();
+            if (!transcript) throw new Error("No speech was detected in the audio recording.");
+
+            finalText = text ? `${text}\n\n[Voice transcript]\n${transcript}` : transcript;
+            status.textContent = "✓ Transcript generated. Please review and edit it before submitting.";
+        } else {
+            status.textContent = "";
+            status.classList.add("hidden");
         }
-        document.getElementById("dash-ngo-name").innerText = ngoName;
 
-        fetch(`${API_BASE}/cases/ngo/${ngoId}`)
-            .then(res => res.json())
-            .then(data => {
-                if (data.success && data.cases.length > 0) {
-                    casesList.innerHTML = data.cases.map(c => `
-                        <div class="case-card ${c.severity}">
-                            <strong>Case ID: ${c.caseId}</strong> | <b>Severity: ${c.severity}</b>
-                            <p><b>Victim:</b> ${c.victimDetails.name} (Age: ${c.victimDetails.age}, Gender: ${c.victimDetails.gender})</p>
-                            <p><b>Statement:</b> ${c.statement}</p>
-                            <p><b>AI Summary:</b> ${c.aiSummary}</p>
-                            <small>Submitted on: ${new Date(c.createdAt).toLocaleString()}</small>
-                        </div>
-                    `).join("");
-                } else {
-                    casesList.innerHTML = "<p>No grievance reports found yet.</p>";
-                }
-            })
-            .catch(err => {
-                casesList.innerHTML = "<p>Error loading cases: " + err.message + "</p>";
-            });
+        $("review-text").value = finalText;
+        const wrap = $("review-audio-wrap");
+        if (audio) {
+            wrap.classList.remove("hidden");
+            const url = reportMethod === "record" ? recordedUrl : URL.createObjectURL(audio);
+            $("review-audio").src = url;
+        } else {
+            wrap.classList.add("hidden");
+            $("review-audio").removeAttribute("src");
+        }
+        showScreen(4);
+    } catch (error) {
+        console.error("Transcription error:", error);
+        setError("method-error", error.message);
+    } finally {
+        continueButton.disabled = false;
     }
-});
+}
+
+async function submitVictimReport() {
+    const audio = selectedAudio();
+    const statement = $("review-text").value.trim();
+    if (!ngoSlug || (!statement && !audio)) return;
+    $("submit-btn").disabled = true; showScreen(5);
+    try {
+        const form = new FormData();
+        form.append("ngoSlug", ngoSlug);
+        form.append("name", $("v-name").value.trim());
+        form.append("age", $("v-age").value);
+        form.append("gender", $("v-gender").value.trim());
+        form.append("phone", $("v-phone").value.trim());
+        form.append("address", $("v-address").value.trim());
+        form.append("email", $("v-email").value.trim());
+        form.append("statement", statement);
+        form.append("source", reportMethod);
+        if (audio) form.append("audio", audio);
+        const response = await fetch(`${API_BASE}/cases/submit`, { method:"POST", body:form });
+        const data = await json(response);
+        if (!response.ok || !data.success) throw new Error(data.message || data.error || "Submission failed.");
+        $("case-id-display").textContent = data.caseId;
+        showScreen(6);
+    } catch (error) {
+        alert(error.message); showScreen(4);
+    } finally { $("submit-btn").disabled = false; }
+}
+
+function setupOrg() {
+    if (!$("login-form")) return;
+    const savedId = localStorage.getItem("ngoId");
+    if (savedId) showOrgPortal();
+    $("login-tab").onclick = () => { $("login-form").classList.remove("hidden"); $("register-form").classList.add("hidden"); $("login-tab").classList.add("active"); $("register-tab").classList.remove("active"); };
+    $("register-tab").onclick = () => { $("register-form").classList.remove("hidden"); $("login-form").classList.add("hidden"); $("register-tab").classList.add("active"); $("login-tab").classList.remove("active"); };
+    $("login-form").onsubmit = e => login(e);
+    $("register-form").onsubmit = e => registerNgo(e);
+    $("logout-btn").onclick = logout;
+    $("copy-link").onclick = async () => { await navigator.clipboard.writeText($("unique-link").value); $("copy-link").textContent="Copied"; setTimeout(()=>$("copy-link").textContent="Copy",1200); };
+    $("refresh-cases").onclick = loadOrgCases;
+    $("close-detail").onclick = () => $("case-detail").classList.add("hidden");
+}
+async function login(e) {
+    e.preventDefault(); setError("auth-error", "");
+    try { const r = await fetch(`${API_BASE}/ngo/login`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({email:$("login-email").value.trim(),password:$("login-password").value}) }); const d=await json(r); if(!r.ok||!d.success) throw new Error(d.message||"Login failed."); saveNgo(d.ngo); showOrgPortal(); } catch(err){setError("auth-error",err.message);}
+}
+async function registerNgo(e) {
+    e.preventDefault(); setError("auth-error", "");
+    try { const r=await fetch(`${API_BASE}/ngo/register`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:$("reg-name").value.trim(),email:$("reg-email").value.trim(),password:$("reg-password").value})}); const d=await json(r); if(!r.ok||!d.success) throw new Error(d.message||"Registration failed."); saveNgo(d.ngo); showOrgPortal(); } catch(err){setError("auth-error",err.message);}
+}
+function saveNgo(ngo){ localStorage.setItem("ngoId",ngo.id); localStorage.setItem("ngoName",ngo.name); localStorage.setItem("uniqueLink",ngo.uniqueLink); }
+function showOrgPortal(){
+    $("auth-view").classList.add("hidden"); $("portal-view").classList.remove("hidden");
+    $("ngo-title").textContent=localStorage.getItem("ngoName")||"Organization"; const link=localStorage.getItem("uniqueLink")||""; $("unique-link").value=link; $("open-link").href=link; loadOrgCases();
+}
+function logout(){localStorage.removeItem("ngoId");localStorage.removeItem("ngoName");localStorage.removeItem("uniqueLink");location.reload();}
+async function loadOrgCases(){
+    const id=localStorage.getItem("ngoId"); if(!id) return;
+    try { const r=await fetch(`${API_BASE}/cases/ngo/${encodeURIComponent(id)}`); const d=await json(r); if(!r.ok||!d.success) throw new Error(d.message||"Could not load cases."); organizationCases=d.cases||[]; renderCases($("cases-list"),organizationCases); updateStats("total-count","new-count","review-count","resolved-count"); } catch(err){ $("cases-list").innerHTML=`<p>${escapeHtml(err.message)}</p>`; }
+}
+function updateStats(total,newId,reviewId,resolvedId){$(total).textContent=organizationCases.length;$(newId).textContent=organizationCases.filter(c=>c.status==="NEW").length;$(reviewId).textContent=organizationCases.filter(c=>c.status==="IN_REVIEW").length;$(resolvedId).textContent=organizationCases.filter(c=>c.status==="RESOLVED").length;}
+function renderCases(container,cases){
+    const detail=$("case-detail");
+    if(detail && detail.parentElement !== $("portal-view")) $("portal-view").appendChild(detail);
+    if(!cases.length){container.innerHTML="<p>No cases have been submitted yet.</p>";return;}
+    container.innerHTML=cases.map(c=>`<div class="case-item" data-case="${escapeHtml(c.caseId)}"><div class="case-meta"><strong>${escapeHtml(c.caseId)}</strong><span>${escapeHtml(c.source)}</span><span class="badge ${String(c.severity||"").toLowerCase()}">${escapeHtml(c.severity||"Medium")}</span><span class="badge ${String(c.priority||"").toLowerCase()}">${escapeHtml(c.priority||"NORMAL")}</span><span>${escapeHtml(c.status||"NEW")}</span></div><p>${escapeHtml((c.statement||"Voice recording submitted.").slice(0,180))}</p><small>${c.createdAt?new Date(c.createdAt).toLocaleString():""}</small></div>`).join("");
+    container.querySelectorAll("[data-case]").forEach(el=>el.onclick=()=>openCase(el.dataset.case));
+}
+async function openCase(caseId){
+    try{
+        const r=await fetch(`${API_BASE}/cases/${encodeURIComponent(caseId)}`);
+        const d=await json(r);
+        if(!r.ok||!d.case) throw new Error(d.message||"Case not found.");
+        selectedCaseId=caseId;
+        const c=d.case;
+        $("detail-id").textContent=c.caseId;
+        $("detail-content").innerHTML=caseDetailHtml(c);
+        const detail=$("case-detail");
+        const clickedCase=document.querySelector(`[data-case="${CSS.escape(caseId)}"]`);
+        if(clickedCase) clickedCase.insertAdjacentElement("afterend",detail);
+        detail.classList.remove("hidden");
+        requestAnimationFrame(()=>detail.scrollIntoView({behavior:"smooth",block:"start"}));
+    }catch(err){alert(err.message);}
+}
+function caseDetailHtml(c){
+    const v=c.victimDetails||{};
+    const flags=Array.isArray(c.aiFlags)?c.aiFlags:[];
+    const flagHtml = flags.length ? `<div style="margin-top:12px;"><b>AI Flags</b><ul style="margin:7px 0 0 18px;padding:0;">${flags.map(flag=>`<li style="margin-bottom:5px;">${escapeHtml(flag)}</li>`).join("")}</ul></div>` : `<p class="muted" style="margin:8px 0 0;">No specific AI flags were identified.</p>`;
+    const priority=String(c.priority||"").trim();
+    const priorityHtml=priority?`<div class="case-meta" style="margin-top:8px;">Priority: <span class="badge ${priority.toLowerCase()}">${escapeHtml(priority)}</span></div>`:"";
+    return `<div class="detail-grid"><div><b>Name</b><div class="detail-value">${escapeHtml(v.name)}</div></div><div><b>Age</b><div class="detail-value">${escapeHtml(v.age)}</div></div><div><b>Gender</b><div class="detail-value">${escapeHtml(v.gender)}</div></div><div><b>Phone</b><div class="detail-value">${escapeHtml(v.phone)}</div></div><div><b>Email</b><div class="detail-value">${escapeHtml(v.email)}</div></div><div><b>Address</b><div class="detail-value">${escapeHtml(v.address)}</div></div></div><div class="section-box"><b>Statement / reviewed transcript</b><div class="detail-value">${escapeHtml(c.statement||"Voice recording submitted.")}</div></div><div class="section-box"><b>AI-assisted assessment</b><div class="case-meta" style="margin-top:8px;">Severity: <span class="badge ${String(c.severity||"").toLowerCase()}">${escapeHtml(c.severity||"Medium")}</span></div>${priorityHtml}<div style="margin-top:12px;"><b>AI Summary</b><p style="margin:7px 0 0;">${escapeHtml(c.aiSummary||"Assessment not available.")}</p></div>${flagHtml}<p class="muted" style="margin-top:12px;">This is an assessment aid for human review, not a medical or psychological diagnosis.</p></div>${c.audio?.filename?`<div class="section-box"><b>Original audio</b><audio controls class="audio-preview" src="${API_BASE}/cases/${encodeURIComponent(c.caseId)}/audio"></audio><p class="muted" style="margin:6px 0 0;">${escapeHtml(c.audio.originalName||c.audio.filename)} · ${escapeHtml(formatFileSize(c.audio.size||0))}</p></div>`:""}<div class="section-box"><b>Status</b><select id="status-select"><option value="NEW" ${c.status==="NEW"?"selected":""}>NEW</option><option value="IN_REVIEW" ${c.status==="IN_REVIEW"?"selected":""}>IN_REVIEW</option><option value="RESOLVED" ${c.status==="RESOLVED"?"selected":""}>RESOLVED</option></select><button class="btn small-btn" id="status-save">Update Status</button><hr><b>Assigned counsellor</b><input id="counsellor-input" value="${escapeHtml(c.counsellor||"")}" placeholder="Counsellor name"><button class="btn small-btn" id="counsellor-save">Save Counsellor</button></div>`
+}
+
+async function saveCasePatch(body){const r=await fetch(`${API_BASE}/cases/${encodeURIComponent(selectedCaseId)}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const d=await json(r);if(!r.ok||!d.success)throw new Error(d.message||"Update failed.");return d.case;}
+document.addEventListener("click",async e=>{if(e.target.id==="status-save"){try{await saveCasePatch({status:$("status-select").value});await loadOrgCases();alert("Status updated.");}catch(err){alert(err.message);}}if(e.target.id==="counsellor-save"){try{await saveCasePatch({counsellor:$("counsellor-input").value.trim()});alert("Counsellor updated.");}catch(err){alert(err.message);}}});
+
+function setupDashboard(){if(!$("dashboard-content"))return;const id=localStorage.getItem("ngoId");if(!id){$("dashboard-content").classList.add("hidden");$("dashboard-auth-message").classList.remove("hidden");return;}$("dash-ngo-name").textContent=localStorage.getItem("ngoName")||"Organization Dashboard";$("dash-logout").onclick=logout;$("dash-refresh").onclick=loadDashboardCases;loadDashboardCases();}
+async function loadDashboardCases(){const id=localStorage.getItem("ngoId");try{const r=await fetch(`${API_BASE}/cases/ngo/${encodeURIComponent(id)}`);const d=await json(r);if(!r.ok||!d.success)throw new Error(d.message||"Could not load cases.");organizationCases=d.cases||[];renderCases($("dash-cases-list"),organizationCases);updateStats("dash-total","dash-new","dash-review","dash-resolved");}catch(err){$("dash-cases-list").innerHTML=`<p>${escapeHtml(err.message)}</p>`;}}
+
+document.addEventListener("DOMContentLoaded",()=>{setupVictim();setupOrg();setupDashboard();});

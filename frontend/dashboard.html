@@ -1,18 +1,9 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>NIVARAN - NGO Dashboard</title>
-    <link rel="stylesheet" href="style.css">
-</head>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>NIVARAN Dashboard</title><link rel="stylesheet" href="style.css"></head>
 <body>
-    <div class="container" style="max-width: 900px;">
-        <h2>Dashboard: <span id="dash-ngo-name">NGO</span></h2>
-        <button onclick="localStorage.clear(); window.location.href='org.html';" class="btn secondary" style="width: auto; padding: 5px 15px; float: right;">Logout</button>
-
-        <h3>Incoming Grievance Reports</h3>
-        <div id="cases-list">Loading cases...</div>
-    </div>
-    <script src="script.js"></script>
-</body>
-</html>
+<main class="container wide">
+<a class="back-link" href="org.html">← Organization Portal</a>
+<div id="dashboard-auth-message" class="section-box hidden"><h2>Organization session not found</h2><p>Please sign in through the organization portal first.</p><a class="btn" href="org.html">Open Organization Portal</a></div>
+<div id="dashboard-content"><div class="portal-header"><div><div class="logo">NIVARAN</div><h1 id="dash-ngo-name">Dashboard</h1></div><button class="btn btn-outline small-btn" id="dash-logout" type="button">Logout</button></div><div class="stats"><div><span>Total cases</span><strong id="dash-total">0</strong></div><div><span>New</span><strong id="dash-new">0</strong></div><div><span>In review</span><strong id="dash-review">0</strong></div><div><span>Resolved</span><strong id="dash-resolved">0</strong></div></div><div class="section-box"><div class="section-heading"><h2>Incoming Reports</h2><button class="btn btn-outline small-btn" id="dash-refresh" type="button">Refresh</button></div><div id="dash-cases-list">Loading cases...</div></div></div>
+</main><script src="script.js"></script></body></html>

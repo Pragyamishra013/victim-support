@@ -1,0 +1,4 @@
+Add this line to your existing backend/.env (do not replace the rest):
+GEMINI_API_KEY=YOUR_ACTUAL_GEMINI_API_KEY
+
+Keep your existing GROQ_API_KEY because Groq is still used for speech-to-text.
