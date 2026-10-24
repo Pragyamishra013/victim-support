@@ -178,21 +178,51 @@ async function toggleVideoRecording() {
 
         videoRecorder.ondataavailable = e => { if (e.data?.size) videoChunks.push(e.data); };
 
-        videoRecorder.onstop = () => {
-            // Force strict video/webm type so browser reads duration correctly
-            videoRecordedBlob = new Blob(videoChunks, { type: 'video/webm' });
-            if (videoRecordedUrl) URL.revokeObjectURL(videoRecordedUrl);
-            videoRecordedUrl = URL.createObjectURL(videoRecordedBlob);
-            
-            const playback = $("video-playback");
-            if (playback) {
-                playback.src = videoRecordedUrl;
-                playback.classList.remove("hidden");
-                playback.load();
-            }
-            $("video-record-status").textContent = "Video recorded successfully! Click Continue to Review.";
-            cleanupVideoRecorder();
+        
+videoRecorder.onstop = () => {
+    const actualType =
+        videoRecorder?.mimeType ||
+        videoChunks.find(chunk => chunk.type)?.type ||
+        "video/webm";
+
+    videoRecordedBlob = new Blob(videoChunks, {
+        type: actualType
+    });
+
+    if (videoRecordedUrl) {
+        URL.revokeObjectURL(videoRecordedUrl);
+    }
+
+    videoRecordedUrl = URL.createObjectURL(videoRecordedBlob);
+
+    const playback = $("video-playback");
+
+    if (playback) {
+        playback.pause();
+        playback.srcObject = null;
+        playback.src = videoRecordedUrl;
+        playback.classList.remove("hidden");
+
+        playback.onerror = () => {
+            console.error("Video playback error:", playback.error);
+            console.log("Video MIME type:", videoRecordedBlob.type);
+            console.log("Video size:", videoRecordedBlob.size);
         };
+
+        playback.load();
+    }
+
+    const status = $("video-record-status");
+
+    if (status) {
+        status.textContent = videoRecordedBlob.size > 0
+            ? "Video recorded. Preview it before continuing."
+            : "Recording is empty. Please record again.";
+    }
+
+    cleanupVideoRecorder();
+};
+
 
         videoRecorder.onerror = () => {
             cleanupVideoRecorder();
@@ -242,12 +272,27 @@ function selectedAudio() {
     return null;
 }
 
+
 function selectedVideo() {
-    if (reportMethod === "video" && videoRecordedBlob) {
-        return new File([videoRecordedBlob], `video-report.webm`, { type: videoRecordedBlob.type || "video/webm" });
+    if (reportMethod !== "video" || !videoRecordedBlob) {
+        return null;
     }
-    return null;
+
+    const mimeType = videoRecordedBlob.type || "video/webm";
+
+    const extension = mimeType.includes("mp4")
+        ? "mp4"
+        : mimeType.includes("ogg")
+            ? "ogv"
+            : "webm";
+
+    return new File(
+        [videoRecordedBlob],
+        `video-report.${extension}`,
+        { type: mimeType }
+    );
 }
+
 
 async function continueToReview() {
     const text = $("report-text").value.trim();

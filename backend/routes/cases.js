@@ -217,51 +217,85 @@ router.get('/:caseId/audio', async (req, res) => {
     }
 });
 
-// Stream Video Route with HTTP Range Request Support for HTML5 video player
+// Stream the uploaded video for the NGO Portal
 router.get('/:caseId/video', async (req, res) => {
     try {
-        const caseItem = await Case.findOne({ caseId: req.params.caseId });
-        if (!caseItem || !caseItem.video || !caseItem.video.path) {
-            return res.status(404).json({ success: false, message: 'Video file not found.' });
-        }
-        
-        const absolutePath = path.resolve(caseItem.video.path);
-        if (!fs.existsSync(absolutePath)) {
-            return res.status(404).json({ success: false, message: 'Video file missing from server storage.' });
+        const caseItem = await Case.findOne({
+            caseId: req.params.caseId
+        });
+
+        if (!caseItem || !caseItem.video) {
+            return res.status(404).json({
+                success: false,
+                message: "Video report not found."
+            });
         }
 
-        const stat = fs.statSync(absolutePath);
-        const fileSize = stat.size;
-        const range = req.headers.range;
+        const path = require("path");
+        const fs = require("fs");
 
-        // Support HTTP Range Requests (Essential for WebM / MP4 video seeking and duration decoding)
-        if (range) {
-            const parts = range.replace(/bytes=/, "").split("-");
-            const start = parseInt(parts[0], 10);
-            const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
-            const chunksize = (end - start) + 1;
-            const file = fs.createReadStream(absolutePath, { start, end });
-            
-            const head = {
-                'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-                'Accept-Ranges': 'bytes',
-                'Content-Length': chunksize,
-                'Content-Type': 'video/webm',
-            };
+        // Use the stored path, with a filename-based fallback
+        const storedPath = caseItem.video.path;
 
-            res.writeHead(206, head);
-            file.pipe(res);
-        } else {
-            const head = {
-                'Content-Length': fileSize,
-                'Content-Type': 'video/webm',
-            };
-            res.writeHead(200, head);
-            fs.createReadStream(absolutePath).pipe(res);
+        const videoPath = storedPath && fs.existsSync(storedPath)
+            ? storedPath
+            : path.join(
+                __dirname,
+                "../uploads",
+                caseItem.video.filename
+            );
+
+        if (!fs.existsSync(videoPath)) {
+            console.error("Video file missing:", videoPath);
+
+            return res.status(404).json({
+                success: false,
+                message: "The uploaded video file could not be found."
+            });
         }
+
+        // Determine the video format
+        const ext = path.extname(videoPath).toLowerCase();
+
+        const mimeTypes = {
+            ".webm": "video/webm",
+            ".mp4": "video/mp4",
+            ".ogg": "video/ogg",
+            ".ogv": "video/ogg",
+            ".mov": "video/quicktime"
+        };
+
+        const contentType =
+            mimeTypes[ext] || "application/octet-stream";
+
+        // Let Express handle video streaming and Range requests
+        res.sendFile(
+            videoPath,
+            {
+                headers: {
+                    "Content-Type": contentType,
+                    "Accept-Ranges": "bytes",
+                    "Cache-Control": "no-cache"
+                }
+            },
+            (err) => {
+                if (err && !res.headersSent) {
+                    console.error("Video streaming error:", err);
+
+                    res.status(err.statusCode || 500).end();
+                }
+            }
+        );
+
     } catch (error) {
-        console.error("Video streaming error:", error);
-        res.status(500).json({ success: false, message: 'Error streaming video.' });
+        console.error("Error serving video:", error);
+
+        if (!res.headersSent) {
+            res.status(500).json({
+                success: false,
+                message: "Unable to load the video report."
+            });
+        }
     }
 });
 
