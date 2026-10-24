@@ -23,7 +23,7 @@
     </section>
 
     <section id="screen-2" class="screen">
-        <div class="progress">1. Consent <span>→</span> <strong>2. Details</strong> <span>→</span> 3. Report <span>→</span> 4. Review</div>
+        <div class="progress">Consent <span>→</span> <strong>2. Details</strong> <span>→</span> 3. Report <span>→</span> 4. Review</div>
         <h1>Your information</h1>
         <p>These details help the organization understand and follow up on your report.</p>
         <form id="victim-details-form">
@@ -41,7 +41,7 @@
     </section>
 
     <section id="screen-3" class="screen">
-        <div class="progress">1. Consent <span>→</span> 2. Details <span>→</span> <strong>3. Report</strong> <span>→</span> 4. Review</div>
+        <div class="progress">Consent <span>→</span> 2. Details <span>→</span> <strong>3. Report</strong> <span>→</span> 4. Review</div>
         <h1>Choose one way to report</h1>
         <p>Please choose only one method. You can switch methods before continuing.</p>
         <div id="method-error" class="error-msg"></div>
@@ -49,6 +49,7 @@
             <button class="method-card" type="button" data-method="text"><strong>Write a report</strong><span>Describe what happened in your own words.</span></button>
             <button class="method-card" type="button" data-method="record"><strong>Record your voice</strong><span>Record directly in this browser.</span></button>
             <button class="method-card" type="button" data-method="upload"><strong>Upload audio</strong><span>Use an existing audio recording.</span></button>
+            <button class="method-card" type="button" data-method="signvideo"><strong>Sign Language Video (Deaf/Mute)</strong><span>Record a sign language video report.</span></button>
         </div>
         <div id="method-text" class="method-panel">
             <textarea id="report-text" maxlength="5000" placeholder="Describe your situation..."></textarea>
@@ -64,12 +65,21 @@
             <input id="audio-file" type="file" accept="audio/*" class="hidden">
             <div id="upload-name" class="muted"></div>
         </div>
+        <div id="method-signvideo" class="method-panel hidden">
+            <p class="privacy-note">Deaf/Mute Support: Please record your complaint using Sign Language via camera.</p>
+            <div style="margin-bottom: 10px;">
+                <video id="video-preview" autoplay playsinline muted width="100%" style="max-width: 400px; border-radius: 8px; background: #000;"></video>
+            </div>
+            <button id="video-record-btn" class="btn" type="button">● Start Sign Video Recording</button>
+            <div id="video-record-status" class="record-status"></div>
+            <video id="video-playback" controls class="audio-preview hidden" style="margin-top: 10px; max-width: 400px;"></video>
+        </div>
         <button class="btn" id="report-continue" type="button">Continue to Review</button>
         <button class="btn btn-outline" id="report-back" type="button">Back</button>
     </section>
 
     <section id="screen-4" class="screen">
-        <div class="progress">1. Consent <span>→</span> 2. Details <span>→</span> 3. Report <span>→</span> <strong>4. Review</strong></div>
+        <div class="progress">Consent <span>→</span> 2. Details <span>→</span> 3. Report <span>→</span> <strong>4. Review</strong></div>
         <h1>Review your report</h1>
         <p>Check the information before submitting. You can edit a written report here.</p>
         <div class="review-card">
@@ -77,6 +87,7 @@
             <div id="transcription-status" class="privacy-note hidden"></div>
             <textarea id="review-text" maxlength="5000"></textarea>
             <div id="review-audio-wrap" class="hidden"><div class="review-label">Original audio</div><audio id="review-audio" controls class="audio-preview"></audio></div>
+            <div id="review-video-wrap" class="hidden"><div class="review-label">Sign Language Video</div><video id="review-video" controls class="audio-preview" style="max-width: 100%;"></video></div>
         </div>
         <button id="submit-btn" class="btn" type="button">Submit Report Securely</button>
         <button id="review-back" class="btn btn-outline" type="button">Edit Report</button>

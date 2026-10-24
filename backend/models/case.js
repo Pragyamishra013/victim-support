@@ -24,6 +24,14 @@ const caseSchema = new mongoose.Schema({
         size: { type: Number, default: 0 },
         uploadedAt: { type: Date }
     },
+    video: {
+        filename: { type: String, default: "" },
+        originalName: { type: String, default: "" },
+        mimeType: { type: String, default: "" },
+        size: { type: Number, default: 0 },
+        uploadedAt: { type: Date }
+    },
+    isDisabilityReport: { type: Boolean, default: false },
     status: { type: String, enum: ["NEW", "IN_REVIEW", "RESOLVED"], default: "NEW" },
     counsellor: { type: String, default: "" }
 }, { timestamps: true });

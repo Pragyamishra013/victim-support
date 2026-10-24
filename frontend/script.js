@@ -11,17 +11,37 @@ let chunks = [];
 let organizationCases = [];
 let selectedCaseId = null;
 
+let videoRecordedBlob = null;
+let videoRecordedUrl = null;
+let videoRecorder = null;
+let videoRecorderStream = null;
+let videoChunks = [];
+
 function $(id) { return document.getElementById(id); }
+
 function showScreen(number) {
     document.querySelectorAll(".screen").forEach(s => s.classList.remove("active"));
     const target = $("screen-" + number);
     if (target) target.classList.add("active");
     window.scrollTo({ top: 0, behavior: "smooth" });
 }
+
 function escapeHtml(value) {
     return String(value ?? "").replace(/[&<>'"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#039;","\"":"&quot;"}[c]));
 }
-function setError(id, message) { const el = $(id); if (!el) return; el.textContent = message || ""; }
+
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024, sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+function setError(id, message) { 
+    const el = $(id); 
+    if (!el) return; 
+    el.textContent = message || ""; 
+}
 
 async function json(response) {
     const text = await response.text();
@@ -58,6 +78,10 @@ function setupVictim() {
     $("report-text").addEventListener("input", () => $("char-counter").textContent = `${$("report-text").value.length} / 5000`);
     $("record-btn").addEventListener("click", toggleRecording);
     $("audio-file").addEventListener("change", handleUpload);
+    
+    const videoBtn = $("video-record-btn");
+    if (videoBtn) videoBtn.addEventListener("click", toggleVideoRecording);
+
     $("report-continue").addEventListener("click", continueToReview);
     $("report-back").addEventListener("click", () => showScreen(2));
     $("review-back").addEventListener("click", () => showScreen(3));
@@ -72,8 +96,13 @@ function selectMethod(method) {
     $("method-text").classList.toggle("hidden", method !== "text");
     $("method-record").classList.toggle("hidden", method !== "record");
     $("method-upload").classList.toggle("hidden", method !== "upload");
+    
+    const signVideoPanel = $("method-signvideo");
+    if (signVideoPanel) signVideoPanel.classList.toggle("hidden", method !== "signvideo");
+
     setError("method-error", "");
     if (method !== "record" && recorder && recorder.state !== "inactive") stopRecording();
+    if (method !== "signvideo" && videoRecorder && videoRecorder.state !== "inactive") stopVideoRecording();
 }
 
 function mimeType() {
@@ -110,20 +139,97 @@ async function toggleRecording() {
         $("record-status").textContent = "Recording...";
     } catch (error) {
         cleanupRecorder();
-        setError("method-error", error.name === "NotAllowedError" ? "Microphone permission was denied. Allow microphone access and try again." : "Could not start recording.");
+        setError("method-error", error.name === "NotAllowedError" ? "Microphone permission was denied." : "Could not start recording.");
     }
 }
+
 function stopRecording() { if (recorder && recorder.state !== "inactive") recorder.stop(); }
+
 function cleanupRecorder() {
     recorderStream?.getTracks().forEach(t => t.stop());
     recorderStream = null; recorder = null;
     $("record-btn").textContent = "● Start recording";
     $("record-btn").classList.remove("recording");
 }
+
+async function toggleVideoRecording() {
+    if (videoRecorder && videoRecorder.state === "recording") {
+        stopVideoRecording();
+        return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+        setError("method-error", "Your browser does not support video recording.");
+        return;
+    }
+    try {
+        videoRecorderStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        const preview = $("video-preview");
+        if (preview) {
+            preview.srcObject = videoRecorderStream;
+            preview.muted = true;
+        }
+
+        videoChunks = [];
+        videoRecordedBlob = null;
+        
+        const videoTypes = ["video/webm;codecs=vp8,opus", "video/webm", "video/mp4"];
+        const vType = videoTypes.find(t => MediaRecorder.isTypeSupported(t)) || "";
+        videoRecorder = vType ? new MediaRecorder(videoRecorderStream, { mimeType: vType }) : new MediaRecorder(videoRecorderStream);
+
+        videoRecorder.ondataavailable = e => { if (e.data?.size) videoChunks.push(e.data); };
+        videoRecorder.onstop = () => {
+            const finalType = videoRecorder.mimeType || vType || "video/webm";
+            videoRecordedBlob = new Blob(videoChunks, { type: finalType });
+            if (videoRecordedUrl) URL.revokeObjectURL(videoRecordedUrl);
+            videoRecordedUrl = URL.createObjectURL(videoRecordedBlob);
+            
+            const playback = $("video-playback");
+            if (playback) {
+                playback.src = videoRecordedUrl;
+                playback.classList.remove("hidden");
+            }
+            $("video-record-status").textContent = "Sign Language video recorded successfully!";
+            cleanupVideoRecorder();
+        };
+        videoRecorder.onerror = () => {
+            cleanupVideoRecorder();
+            setError("method-error", "Video recording failed. Please try again.");
+        };
+        videoRecorder.start(250);
+        const vBtn = $("video-record-btn");
+        if (vBtn) {
+            vBtn.textContent = "■ Stop Sign Video Recording";
+            vBtn.classList.add("recording");
+        }
+        $("video-record-status").textContent = "Recording sign language video...";
+    } catch (error) {
+        cleanupVideoRecorder();
+        setError("method-error", error.name === "NotAllowedError" ? "Camera/Microphone permission was denied." : "Could not start video recording.");
+    }
+}
+
+function stopVideoRecording() {
+    if (videoRecorder && videoRecorder.state !== "inactive") {
+        videoRecorder.stop();
+    }
+}
+
+function cleanupVideoRecorder() {
+    videoRecorderStream?.getTracks().forEach(t => t.stop());
+    videoRecorderStream = null;
+    videoRecorder = null;
+    const vBtn = $("video-record-btn");
+    if (vBtn) {
+        vBtn.textContent = "● Start Sign Video Recording";
+        vBtn.classList.remove("recording");
+    }
+}
+
 function handleUpload() {
     uploadedFile = $("audio-file").files?.[0] || null;
     $("upload-name").textContent = uploadedFile ? `${uploadedFile.name} selected` : "";
 }
+
 function selectedAudio() {
     if (reportMethod === "record" && recordedBlob) {
         const ext = recordedBlob.type.includes("ogg") ? "ogg" : recordedBlob.type.includes("mp4") ? "mp4" : "webm";
@@ -132,12 +238,23 @@ function selectedAudio() {
     if (reportMethod === "upload") return uploadedFile;
     return null;
 }
+
+function selectedSignVideo() {
+    if (reportMethod === "signvideo" && videoRecordedBlob) {
+        return new File([videoRecordedBlob], `sign-language-report.webm`, { type: videoRecordedBlob.type || "video/webm" });
+    }
+    return null;
+}
+
 async function continueToReview() {
     const text = $("report-text").value.trim();
     const audio = selectedAudio();
+    const signVideo = selectedSignVideo();
+
     if (reportMethod === "text" && !text) return setError("method-error", "Please write your report before continuing.");
     if (reportMethod === "record" && !audio) return setError("method-error", "Please make a recording before continuing.");
     if (reportMethod === "upload" && !audio) return setError("method-error", "Please choose an audio file before continuing.");
+    if (reportMethod === "signvideo" && !signVideo) return setError("method-error", "Please record your sign language video before continuing.");
 
     setError("method-error", "");
     const continueButton = $("report-continue");
@@ -147,7 +264,11 @@ async function continueToReview() {
         let finalText = text;
         const status = $("transcription-status");
 
-        if (audio) {
+        if (reportMethod === "signvideo" && signVideo) {
+            status.textContent = "Processing sign language video report...";
+            status.classList.remove("hidden");
+            finalText = text ? `${text}\n\n[Sign Language Video Report Submitted]` : "[Sign Language Video Report Submitted by Deaf/Mute Victim]";
+        } else if (audio) {
             status.textContent = "Converting your audio to text... Please wait.";
             status.classList.remove("hidden");
 
@@ -171,6 +292,7 @@ async function continueToReview() {
         }
 
         $("review-text").value = finalText;
+        
         const wrap = $("review-audio-wrap");
         if (audio) {
             wrap.classList.remove("hidden");
@@ -180,9 +302,19 @@ async function continueToReview() {
             wrap.classList.add("hidden");
             $("review-audio").removeAttribute("src");
         }
+
+        const videoWrap = $("review-video-wrap");
+        if (signVideo) {
+            videoWrap.classList.remove("hidden");
+            $("review-video").src = videoRecordedUrl;
+        } else {
+            videoWrap.classList.add("hidden");
+            $("review-video").removeAttribute("src");
+        }
+
         showScreen(4);
     } catch (error) {
-        console.error("Transcription error:", error);
+        console.error("Review error:", error);
         setError("method-error", error.message);
     } finally {
         continueButton.disabled = false;
@@ -191,9 +323,13 @@ async function continueToReview() {
 
 async function submitVictimReport() {
     const audio = selectedAudio();
+    const signVideo = selectedSignVideo();
     const statement = $("review-text").value.trim();
-    if (!ngoSlug || (!statement && !audio)) return;
-    $("submit-btn").disabled = true; showScreen(5);
+    if (!ngoSlug || (!statement && !audio && !signVideo)) return;
+
+    $("submit-btn").disabled = true; 
+    showScreen(5);
+
     try {
         const form = new FormData();
         form.append("ngoSlug", ngoSlug);
@@ -205,56 +341,164 @@ async function submitVictimReport() {
         form.append("email", $("v-email").value.trim());
         form.append("statement", statement);
         form.append("source", reportMethod);
+        
         if (audio) form.append("audio", audio);
+        if (signVideo) {
+            form.append("video", signVideo);
+            form.append("isDisabilityReport", "true");
+        } else {
+            form.append("isDisabilityReport", "false");
+        }
+
         const response = await fetch(`${API_BASE}/cases/submit`, { method:"POST", body:form });
         const data = await json(response);
         if (!response.ok || !data.success) throw new Error(data.message || data.error || "Submission failed.");
         $("case-id-display").textContent = data.caseId;
         showScreen(6);
     } catch (error) {
-        alert(error.message); showScreen(4);
-    } finally { $("submit-btn").disabled = false; }
+        alert(error.message); 
+        showScreen(4);
+    } finally { 
+        $("submit-btn").disabled = false; 
+    }
 }
 
 function setupOrg() {
-    if (!$("login-form")) return;
+    const loginTab = $("login-tab");
+    const registerTab = $("register-tab");
+    const loginForm = $("login-form");
+    const registerForm = $("register-form");
+    
+    if (!loginTab || !registerForm) return;
+
     const savedId = localStorage.getItem("ngoId");
     if (savedId) showOrgPortal();
-    $("login-tab").onclick = () => { $("login-form").classList.remove("hidden"); $("register-form").classList.add("hidden"); $("login-tab").classList.add("active"); $("register-tab").classList.remove("active"); };
-    $("register-tab").onclick = () => { $("register-form").classList.remove("hidden"); $("login-form").classList.add("hidden"); $("register-tab").classList.add("active"); $("login-tab").classList.remove("active"); };
-    $("login-form").onsubmit = e => login(e);
-    $("register-form").onsubmit = e => registerNgo(e);
-    $("logout-btn").onclick = logout;
-    $("copy-link").onclick = async () => { await navigator.clipboard.writeText($("unique-link").value); $("copy-link").textContent="Copied"; setTimeout(()=>$("copy-link").textContent="Copy",1200); };
-    $("refresh-cases").onclick = loadOrgCases;
-    $("close-detail").onclick = () => $("case-detail").classList.add("hidden");
+
+    // Use CSS classes instead of inline style.display to preserve original layout/inputs
+    loginTab.addEventListener("click", (e) => {
+        e.preventDefault();
+        loginForm.classList.remove("hidden");
+        registerForm.classList.add("hidden");
+        loginTab.classList.add("active");
+        registerTab.classList.remove("active");
+        setError("auth-error", "");
+    });
+
+    registerTab.addEventListener("click", (e) => {
+        e.preventDefault();
+        registerForm.classList.remove("hidden");
+        loginForm.classList.add("hidden");
+        registerTab.classList.add("active");
+        loginTab.classList.remove("active");
+        setError("auth-error", "");
+    });
+
+    if (loginForm) loginForm.onsubmit = e => login(e);
+    if (registerForm) registerForm.onsubmit = e => registerNgo(e);
+    
+    const logoutBtn = $("logout-btn");
+    if (logoutBtn) logoutBtn.onclick = logout;
+    
+    const copyLink = $("copy-link");
+    if (copyLink) copyLink.onclick = async () => { 
+        await navigator.clipboard.writeText($("unique-link").value); 
+        copyLink.textContent = "Copied"; 
+        setTimeout(() => copyLink.textContent = "Copy", 1200); 
+    };
+    
+    const refreshCases = $("refresh-cases");
+    if (refreshCases) refreshCases.onclick = loadOrgCases;
+    
+    const closeDetail = $("close-detail");
+    if (closeDetail) closeDetail.onclick = () => $("case-detail").classList.add("hidden");
 }
+
 async function login(e) {
     e.preventDefault(); setError("auth-error", "");
-    try { const r = await fetch(`${API_BASE}/ngo/login`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({email:$("login-email").value.trim(),password:$("login-password").value}) }); const d=await json(r); if(!r.ok||!d.success) throw new Error(d.message||"Login failed."); saveNgo(d.ngo); showOrgPortal(); } catch(err){setError("auth-error",err.message);}
+    try { 
+        const r = await fetch(`${API_BASE}/ngo/login`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({email:$("login-email").value.trim(),password:$("login-password").value}) }); 
+        const d = await json(r); 
+        if(!r.ok||!d.success) throw new Error(d.message||"Login failed."); 
+        saveNgo(d.ngo); 
+        showOrgPortal(); 
+    } catch(err){ setError("auth-error",err.message); }
 }
+
 async function registerNgo(e) {
     e.preventDefault(); setError("auth-error", "");
-    try { const r=await fetch(`${API_BASE}/ngo/register`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:$("reg-name").value.trim(),email:$("reg-email").value.trim(),password:$("reg-password").value})}); const d=await json(r); if(!r.ok||!d.success) throw new Error(d.message||"Registration failed."); saveNgo(d.ngo); showOrgPortal(); } catch(err){setError("auth-error",err.message);}
+    try { 
+        const r = await fetch(`${API_BASE}/ngo/register`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({name:$("reg-name").value.trim(),email:$("reg-email").value.trim(),password:$("reg-password").value}) }); 
+        const d = await json(r); 
+        if(!r.ok||!d.success) throw new Error(d.message||"Registration failed."); 
+        saveNgo(d.ngo); 
+        showOrgPortal(); 
+    } catch(err){ setError("auth-error",err.message); }
 }
-function saveNgo(ngo){ localStorage.setItem("ngoId",ngo.id); localStorage.setItem("ngoName",ngo.name); localStorage.setItem("uniqueLink",ngo.uniqueLink); }
+
+function saveNgo(ngo){ 
+    localStorage.setItem("ngoId",ngo.id); 
+    localStorage.setItem("ngoName",ngo.name); 
+    localStorage.setItem("uniqueLink",ngo.uniqueLink); 
+}
+
 function showOrgPortal(){
-    $("auth-view").classList.add("hidden"); $("portal-view").classList.remove("hidden");
-    $("ngo-title").textContent=localStorage.getItem("ngoName")||"Organization"; const link=localStorage.getItem("uniqueLink")||""; $("unique-link").value=link; $("open-link").href=link; loadOrgCases();
+    if ($("auth-view")) $("auth-view").classList.add("hidden"); 
+    if ($("portal-view")) $("portal-view").classList.remove("hidden");
+    if ($("ngo-title")) $("ngo-title").textContent=localStorage.getItem("ngoName")||"Organization"; 
+    const link=localStorage.getItem("uniqueLink")||""; 
+    if ($("unique-link")) $("unique-link").value=link; 
+    if ($("open-link")) $("open-link").href=link; 
+    loadOrgCases();
 }
-function logout(){localStorage.removeItem("ngoId");localStorage.removeItem("ngoName");localStorage.removeItem("uniqueLink");location.reload();}
+
+function logout(){ localStorage.clear(); location.reload(); }
+
 async function loadOrgCases(){
     const id=localStorage.getItem("ngoId"); if(!id) return;
-    try { const r=await fetch(`${API_BASE}/cases/ngo/${encodeURIComponent(id)}`); const d=await json(r); if(!r.ok||!d.success) throw new Error(d.message||"Could not load cases."); organizationCases=d.cases||[]; renderCases($("cases-list"),organizationCases); updateStats("total-count","new-count","review-count","resolved-count"); } catch(err){ $("cases-list").innerHTML=`<p>${escapeHtml(err.message)}</p>`; }
+    try { 
+        const r=await fetch(`${API_BASE}/cases/ngo/${encodeURIComponent(id)}`); 
+        const d=await json(r); 
+        if(!r.ok||!d.success) throw new Error(d.message||"Could not load cases."); 
+        organizationCases=d.cases||[]; 
+        renderCases($("cases-list"),organizationCases); 
+        updateStats("total-count","new-count","review-count","resolved-count"); 
+    } catch(err){ 
+        if ($("cases-list")) $("cases-list").innerHTML=`<p>${escapeHtml(err.message)}</p>`; 
+    }
 }
-function updateStats(total,newId,reviewId,resolvedId){$(total).textContent=organizationCases.length;$(newId).textContent=organizationCases.filter(c=>c.status==="NEW").length;$(reviewId).textContent=organizationCases.filter(c=>c.status==="IN_REVIEW").length;$(resolvedId).textContent=organizationCases.filter(c=>c.status==="RESOLVED").length;}
+
+function updateStats(total,newId,reviewId,resolvedId){
+    if ($(total))$(total).textContent=organizationCases.length;
+    if ($(newId))$(newId).textContent=organizationCases.filter(c=>c.status==="NEW").length;
+    if ($(reviewId))$(reviewId).textContent=organizationCases.filter(c=>c.status==="IN_REVIEW").length;
+    if ($(resolvedId))$(resolvedId).textContent=organizationCases.filter(c=>c.status==="RESOLVED").length;
+}
+
 function renderCases(container,cases){
+    if (!container) return;
     const detail=$("case-detail");
     if(detail && detail.parentElement !== $("portal-view")) $("portal-view").appendChild(detail);
     if(!cases.length){container.innerHTML="<p>No cases have been submitted yet.</p>";return;}
-    container.innerHTML=cases.map(c=>`<div class="case-item" data-case="${escapeHtml(c.caseId)}"><div class="case-meta"><strong>${escapeHtml(c.caseId)}</strong><span>${escapeHtml(c.source)}</span><span class="badge ${String(c.severity||"").toLowerCase()}">${escapeHtml(c.severity||"Medium")}</span><span class="badge ${String(c.priority||"").toLowerCase()}">${escapeHtml(c.priority||"NORMAL")}</span><span>${escapeHtml(c.status||"NEW")}</span></div><p>${escapeHtml((c.statement||"Voice recording submitted.").slice(0,180))}</p><small>${c.createdAt?new Date(c.createdAt).toLocaleString():""}</small></div>`).join("");
+    
+    container.innerHTML=cases.map(c=> {
+        const disabilityBadge = c.isDisabilityReport ? `<span class="badge" style="background:#7c3aed;color:#fff;">♿ Sign Language</span>` : "";
+        return `<div class="case-item" data-case="${escapeHtml(c.caseId)}">
+            <div class="case-meta">
+                <strong>${escapeHtml(c.caseId)}</strong>
+                <span>${escapeHtml(c.source)}</span>
+                ${disabilityBadge}
+                <span class="badge ${String(c.severity||"").toLowerCase()}">${escapeHtml(c.severity||"Medium")}</span>
+                <span class="badge ${String(c.priority||"").toLowerCase()}">${escapeHtml(c.priority||"NORMAL")}</span>
+                <span>${escapeHtml(c.status||"NEW")}</span>
+            </div>
+            <p>${escapeHtml((c.statement||"Recording submitted.").slice(0,180))}</p>
+            <small>${c.createdAt?new Date(c.createdAt).toLocaleString():""}</small>
+        </div>`;
+    }).join("");
+    
     container.querySelectorAll("[data-case]").forEach(el=>el.onclick=()=>openCase(el.dataset.case));
 }
+
 async function openCase(caseId){
     try{
         const r=await fetch(`${API_BASE}/cases/${encodeURIComponent(caseId)}`);
@@ -262,28 +506,76 @@ async function openCase(caseId){
         if(!r.ok||!d.case) throw new Error(d.message||"Case not found.");
         selectedCaseId=caseId;
         const c=d.case;
-        $("detail-id").textContent=c.caseId;
-        $("detail-content").innerHTML=caseDetailHtml(c);
+        if ($("detail-id")) $("detail-id").textContent=c.caseId;
+        if ($("detail-content")) $("detail-content").innerHTML=caseDetailHtml(c);
         const detail=$("case-detail");
         const clickedCase=document.querySelector(`[data-case="${CSS.escape(caseId)}"]`);
-        if(clickedCase) clickedCase.insertAdjacentElement("afterend",detail);
-        detail.classList.remove("hidden");
-        requestAnimationFrame(()=>detail.scrollIntoView({behavior:"smooth",block:"start"}));
+        if(clickedCase && detail) clickedCase.insertAdjacentElement("afterend",detail);
+        if (detail) detail.classList.remove("hidden");
+        requestAnimationFrame(()=>detail?.scrollIntoView({behavior:"smooth",block:"start"}));
     }catch(err){alert(err.message);}
 }
+
 function caseDetailHtml(c){
     const v=c.victimDetails||{};
     const flags=Array.isArray(c.aiFlags)?c.aiFlags:[];
     const flagHtml = flags.length ? `<div style="margin-top:12px;"><b>AI Flags</b><ul style="margin:7px 0 0 18px;padding:0;">${flags.map(flag=>`<li style="margin-bottom:5px;">${escapeHtml(flag)}</li>`).join("")}</ul></div>` : `<p class="muted" style="margin:8px 0 0;">No specific AI flags were identified.</p>`;
     const priority=String(c.priority||"").trim();
     const priorityHtml=priority?`<div class="case-meta" style="margin-top:8px;">Priority: <span class="badge ${priority.toLowerCase()}">${escapeHtml(priority)}</span></div>`:"";
-    return `<div class="detail-grid"><div><b>Name</b><div class="detail-value">${escapeHtml(v.name)}</div></div><div><b>Age</b><div class="detail-value">${escapeHtml(v.age)}</div></div><div><b>Gender</b><div class="detail-value">${escapeHtml(v.gender)}</div></div><div><b>Phone</b><div class="detail-value">${escapeHtml(v.phone)}</div></div><div><b>Email</b><div class="detail-value">${escapeHtml(v.email)}</div></div><div><b>Address</b><div class="detail-value">${escapeHtml(v.address)}</div></div></div><div class="section-box"><b>Statement / reviewed transcript</b><div class="detail-value">${escapeHtml(c.statement||"Voice recording submitted.")}</div></div><div class="section-box"><b>AI-assisted assessment</b><div class="case-meta" style="margin-top:8px;">Severity: <span class="badge ${String(c.severity||"").toLowerCase()}">${escapeHtml(c.severity||"Medium")}</span></div>${priorityHtml}<div style="margin-top:12px;"><b>AI Summary</b><p style="margin:7px 0 0;">${escapeHtml(c.aiSummary||"Assessment not available.")}</p></div>${flagHtml}<p class="muted" style="margin-top:12px;">This is an assessment aid for human review, not a medical or psychological diagnosis.</p></div>${c.audio?.filename?`<div class="section-box"><b>Original audio</b><audio controls class="audio-preview" src="${API_BASE}/cases/${encodeURIComponent(c.caseId)}/audio"></audio><p class="muted" style="margin:6px 0 0;">${escapeHtml(c.audio.originalName||c.audio.filename)} · ${escapeHtml(formatFileSize(c.audio.size||0))}</p></div>`:""}<div class="section-box"><b>Status</b><select id="status-select"><option value="NEW" ${c.status==="NEW"?"selected":""}>NEW</option><option value="IN_REVIEW" ${c.status==="IN_REVIEW"?"selected":""}>IN_REVIEW</option><option value="RESOLVED" ${c.status==="RESOLVED"?"selected":""}>RESOLVED</option></select><button class="btn small-btn" id="status-save">Update Status</button><hr><b>Assigned counsellor</b><input id="counsellor-input" value="${escapeHtml(c.counsellor||"")}" placeholder="Counsellor name"><button class="btn small-btn" id="counsellor-save">Save Counsellor</button></div>`
+    
+    const disabilityNotice = c.isDisabilityReport ? `<div class="section-box" style="background:#f5f3ff;border-left:4px solid #7c3aed;"><b>♿ Deaf / Mute Support Note</b><p style="margin:5px 0 0;">This report was submitted via Sign Language video assistance.</p></div>` : "";
+    const videoBox = c.video?.filename ? `<div class="section-box"><b>Sign Language Video</b><video controls class="audio-preview" style="max-width:100%;" src="${API_BASE}/cases/${encodeURIComponent(c.caseId)}/video"></video><p class="muted" style="margin:6px 0 0;">${escapeHtml(c.video.originalName||c.video.filename)} · ${escapeHtml(formatFileSize(c.video.size||0))}</p></div>` : "";
+    const audioBox = c.audio?.filename ? `<div class="section-box"><b>Original audio</b><audio controls class="audio-preview" src="${API_BASE}/cases/${encodeURIComponent(c.caseId)}/audio"></audio><p class="muted" style="margin:6px 0 0;">${escapeHtml(c.audio.originalName||c.audio.filename)} · ${escapeHtml(formatFileSize(c.audio.size||0))}</p></div>` : "";
+
+    return `${disabilityNotice}<div class="detail-grid"><div><b>Name</b><div class="detail-value">${escapeHtml(v.name)}</div></div><div><b>Age</b><div class="detail-value">${escapeHtml(v.age)}</div></div><div><b>Gender</b><div class="detail-value">${escapeHtml(v.gender)}</div></div><div><b>Phone</b><div class="detail-value">${escapeHtml(v.phone)}</div></div><div><b>Email</b><div class="detail-value">${escapeHtml(v.email)}</div></div><div><b>Address</b><div class="detail-value">${escapeHtml(v.address)}</div></div></div><div class="section-box"><b>Statement / reviewed transcript</b><div class="detail-value">${escapeHtml(c.statement||"Recording submitted.")}</div></div><div class="section-box"><b>AI-assisted assessment</b><div class="case-meta" style="margin-top:8px;">Severity: <span class="badge ${String(c.severity||"").toLowerCase()}">${escapeHtml(c.severity||"Medium")}</span></div>${priorityHtml}<div style="margin-top:12px;"><b>AI Summary</b><p style="margin:7px 0 0;">${escapeHtml(c.aiSummary||"Assessment not available.")}</p></div>${flagHtml}<p class="muted" style="margin-top:12px;">This is an assessment aid for human review, not a medical or psychological diagnosis.</p></div>${videoBox}${audioBox}<div class="section-box"><b>Status</b><select id="status-select"><option value="NEW" ${c.status==="NEW"?"selected":""}>NEW</option><option value="IN_REVIEW" ${c.status==="IN_REVIEW"?"selected":""}>IN_REVIEW</option><option value="RESOLVED" ${c.status==="RESOLVED"?"selected":""}>RESOLVED</option></select><button class="btn small-btn" id="status-save">Update Status</button><hr><b>Assigned counsellor</b><input id="counsellor-input" value="${escapeHtml(c.counsellor||"")}" placeholder="Counsellor name"><button class="btn small-btn" id="counsellor-save">Save Counsellor</button></div>`;
 }
 
-async function saveCasePatch(body){const r=await fetch(`${API_BASE}/cases/${encodeURIComponent(selectedCaseId)}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const d=await json(r);if(!r.ok||!d.success)throw new Error(d.message||"Update failed.");return d.case;}
-document.addEventListener("click",async e=>{if(e.target.id==="status-save"){try{await saveCasePatch({status:$("status-select").value});await loadOrgCases();alert("Status updated.");}catch(err){alert(err.message);}}if(e.target.id==="counsellor-save"){try{await saveCasePatch({counsellor:$("counsellor-input").value.trim()});alert("Counsellor updated.");}catch(err){alert(err.message);}}});
+async function saveCasePatch(body){
+    const r=await fetch(`${API_BASE}/cases/${encodeURIComponent(selectedCaseId)}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    const d=await json(r);
+    if(!r.ok||!d.success)throw new Error(d.message||"Update failed.");
+    return d.case;
+}
 
-function setupDashboard(){if(!$("dashboard-content"))return;const id=localStorage.getItem("ngoId");if(!id){$("dashboard-content").classList.add("hidden");$("dashboard-auth-message").classList.remove("hidden");return;}$("dash-ngo-name").textContent=localStorage.getItem("ngoName")||"Organization Dashboard";$("dash-logout").onclick=logout;$("dash-refresh").onclick=loadDashboardCases;loadDashboardCases();}
-async function loadDashboardCases(){const id=localStorage.getItem("ngoId");try{const r=await fetch(`${API_BASE}/cases/ngo/${encodeURIComponent(id)}`);const d=await json(r);if(!r.ok||!d.success)throw new Error(d.message||"Could not load cases.");organizationCases=d.cases||[];renderCases($("dash-cases-list"),organizationCases);updateStats("dash-total","dash-new","dash-review","dash-resolved");}catch(err){$("dash-cases-list").innerHTML=`<p>${escapeHtml(err.message)}</p>`;}}
+document.addEventListener("click",async e=>{
+    if(e.target.id==="status-save"){
+        try{await saveCasePatch({status:$("status-select").value});await loadOrgCases();alert("Status updated.");}catch(err){alert(err.message);}
+    }
+    if(e.target.id==="counsellor-save"){
+        try{await saveCasePatch({counsellor:$("counsellor-input").value.trim()});alert("Counsellor updated.");}catch(err){alert(err.message);}
+    }
+});
 
-document.addEventListener("DOMContentLoaded",()=>{setupVictim();setupOrg();setupDashboard();});
+function setupDashboard(){
+    if(!$("dashboard-content"))return;
+    const id=localStorage.getItem("ngoId");
+    if(!id){
+        $("dashboard-content").classList.add("hidden");
+        if ($("dashboard-auth-message")) $("dashboard-auth-message").classList.remove("hidden");
+        return;
+    }
+    if ($("dash-ngo-name")) $("dash-ngo-name").textContent=localStorage.getItem("ngoName")||"Organization Dashboard";
+    if ($("dash-logout")) $("dash-logout").onclick=logout;
+    if ($("dash-refresh")) $("dash-refresh").onclick=loadDashboardCases;
+    loadDashboardCases();
+}
+
+async function loadDashboardCases(){
+    const id=localStorage.getItem("ngoId");
+    try{
+        const r=await fetch(`${API_BASE}/cases/ngo/${encodeURIComponent(id)}`);
+        const d=await json(r);
+        if(!r.ok||!d.success) throw new Error(d.message||"Could not load cases.");
+        organizationCases=d.cases||[];
+        renderCases($("dash-cases-list"),organizationCases);
+        updateStats("dash-total","dash-new","dash-review","dash-resolved");
+    }catch(err){
+        if ($("dash-cases-list")) $("dash-cases-list").innerHTML=`<p>${escapeHtml(err.message)}</p>`;
+    }
+}
+
+document.addEventListener("DOMContentLoaded",()=>{
+    setupVictim();
+    setupOrg();
+    setupDashboard();
+});
