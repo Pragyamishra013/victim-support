@@ -49,11 +49,11 @@
             <button class="method-card" type="button" data-method="text"><strong>Write a report</strong><span>Describe what happened in your own words.</span></button>
             <button class="method-card" type="button" data-method="record"><strong>Record your voice</strong><span>Record directly in this browser.</span></button>
             <button class="method-card" type="button" data-method="upload"><strong>Upload audio</strong><span>Use an existing audio recording.</span></button>
-            <button class="method-card" type="button" data-method="signvideo"><strong>Sign Language Video (Deaf/Mute)</strong><span>Record a sign language video report.</span></button>
+            <button class="method-card" type="button" data-method="video"><strong>Record Video</strong><span>Record video report.</span></button>
         </div>
         <div id="method-text" class="method-panel">
             <textarea id="report-text" maxlength="5000" placeholder="Describe your situation..."></textarea>
-            <div id="char-counter" class="char-count">0 / 5000</div>
+            <div id="char-counter" class="char-count">0 / 5000</div> 
         </div>
         <div id="method-record" class="method-panel hidden">
             <button id="record-btn" class="record-btn" type="button">● Start recording</button>
@@ -65,12 +65,12 @@
             <input id="audio-file" type="file" accept="audio/*" class="hidden">
             <div id="upload-name" class="muted"></div>
         </div>
-        <div id="method-signvideo" class="method-panel hidden">
-            <p class="privacy-note">Deaf/Mute Support: Please record your complaint using Sign Language via camera.</p>
+        <div id="method-video" class="method-panel hidden">
+            <p class="privacy-note">Video recorder: Please record your complaint via camera.</p>
             <div style="margin-bottom: 10px;">
                 <video id="video-preview" autoplay playsinline muted width="100%" style="max-width: 400px; border-radius: 8px; background: #000;"></video>
             </div>
-            <button id="video-record-btn" class="btn" type="button">● Start Sign Video Recording</button>
+            <button id="video-record-btn" class="btn" type="button">● Start Video Recording</button>
             <div id="video-record-status" class="record-status"></div>
             <video id="video-playback" controls class="audio-preview hidden" style="margin-top: 10px; max-width: 400px;"></video>
         </div>
@@ -87,7 +87,7 @@
             <div id="transcription-status" class="privacy-note hidden"></div>
             <textarea id="review-text" maxlength="5000"></textarea>
             <div id="review-audio-wrap" class="hidden"><div class="review-label">Original audio</div><audio id="review-audio" controls class="audio-preview"></audio></div>
-            <div id="review-video-wrap" class="hidden"><div class="review-label">Sign Language Video</div><video id="review-video" controls class="audio-preview" style="max-width: 100%;"></video></div>
+            <div id="review-video-wrap" class="hidden"><div class="review-label">Video</div><video id="review-video" controls class="audio-preview" style="max-width: 100%;"></video></div>
         </div>
         <button id="submit-btn" class="btn" type="button">Submit Report Securely</button>
         <button id="review-back" class="btn btn-outline" type="button">Edit Report</button>

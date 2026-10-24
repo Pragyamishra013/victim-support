@@ -97,12 +97,12 @@ function selectMethod(method) {
     $("method-record").classList.toggle("hidden", method !== "record");
     $("method-upload").classList.toggle("hidden", method !== "upload");
     
-    const signVideoPanel = $("method-signvideo");
-    if (signVideoPanel) signVideoPanel.classList.toggle("hidden", method !== "signvideo");
+    const videoPanel = $("method-video");
+    if (videoPanel) videoPanel.classList.toggle("hidden", method !== "video");
 
     setError("method-error", "");
     if (method !== "record" && recorder && recorder.state !== "inactive") stopRecording();
-    if (method !== "signvideo" && videoRecorder && videoRecorder.state !== "inactive") stopVideoRecording();
+    if (method !== "video" && videoRecorder && videoRecorder.state !== "inactive") stopVideoRecording();
 }
 
 function mimeType() {
@@ -177,9 +177,10 @@ async function toggleVideoRecording() {
         videoRecorder = vType ? new MediaRecorder(videoRecorderStream, { mimeType: vType }) : new MediaRecorder(videoRecorderStream);
 
         videoRecorder.ondataavailable = e => { if (e.data?.size) videoChunks.push(e.data); };
+
         videoRecorder.onstop = () => {
-            const finalType = videoRecorder.mimeType || vType || "video/webm";
-            videoRecordedBlob = new Blob(videoChunks, { type: finalType });
+            // Force strict video/webm type so browser reads duration correctly
+            videoRecordedBlob = new Blob(videoChunks, { type: 'video/webm' });
             if (videoRecordedUrl) URL.revokeObjectURL(videoRecordedUrl);
             videoRecordedUrl = URL.createObjectURL(videoRecordedBlob);
             
@@ -187,10 +188,12 @@ async function toggleVideoRecording() {
             if (playback) {
                 playback.src = videoRecordedUrl;
                 playback.classList.remove("hidden");
+                playback.load();
             }
-            $("video-record-status").textContent = "Sign Language video recorded successfully!";
+            $("video-record-status").textContent = "Video recorded successfully! Click Continue to Review.";
             cleanupVideoRecorder();
         };
+
         videoRecorder.onerror = () => {
             cleanupVideoRecorder();
             setError("method-error", "Video recording failed. Please try again.");
@@ -198,10 +201,10 @@ async function toggleVideoRecording() {
         videoRecorder.start(250);
         const vBtn = $("video-record-btn");
         if (vBtn) {
-            vBtn.textContent = "■ Stop Sign Video Recording";
+            vBtn.textContent = "■ Stop Video Recording";
             vBtn.classList.add("recording");
         }
-        $("video-record-status").textContent = "Recording sign language video...";
+        $("video-record-status").textContent = "Recording video...";
     } catch (error) {
         cleanupVideoRecorder();
         setError("method-error", error.name === "NotAllowedError" ? "Camera/Microphone permission was denied." : "Could not start video recording.");
@@ -220,7 +223,7 @@ function cleanupVideoRecorder() {
     videoRecorder = null;
     const vBtn = $("video-record-btn");
     if (vBtn) {
-        vBtn.textContent = "● Start Sign Video Recording";
+        vBtn.textContent = "● Start Video Recording";
         vBtn.classList.remove("recording");
     }
 }
@@ -239,9 +242,9 @@ function selectedAudio() {
     return null;
 }
 
-function selectedSignVideo() {
-    if (reportMethod === "signvideo" && videoRecordedBlob) {
-        return new File([videoRecordedBlob], `sign-language-report.webm`, { type: videoRecordedBlob.type || "video/webm" });
+function selectedVideo() {
+    if (reportMethod === "video" && videoRecordedBlob) {
+        return new File([videoRecordedBlob], `video-report.webm`, { type: videoRecordedBlob.type || "video/webm" });
     }
     return null;
 }
@@ -249,12 +252,12 @@ function selectedSignVideo() {
 async function continueToReview() {
     const text = $("report-text").value.trim();
     const audio = selectedAudio();
-    const signVideo = selectedSignVideo();
+    const videoFile = selectedVideo();
 
     if (reportMethod === "text" && !text) return setError("method-error", "Please write your report before continuing.");
     if (reportMethod === "record" && !audio) return setError("method-error", "Please make a recording before continuing.");
     if (reportMethod === "upload" && !audio) return setError("method-error", "Please choose an audio file before continuing.");
-    if (reportMethod === "signvideo" && !signVideo) return setError("method-error", "Please record your sign language video before continuing.");
+    if (reportMethod === "video" && !videoFile) return setError("method-error", "Please record your video before continuing.");
 
     setError("method-error", "");
     const continueButton = $("report-continue");
@@ -264,28 +267,52 @@ async function continueToReview() {
         let finalText = text;
         const status = $("transcription-status");
 
-        if (reportMethod === "signvideo" && signVideo) {
-            status.textContent = "Processing sign language video report...";
+        if (reportMethod === "video" && videoFile) {
+            status.textContent = "Converting video speech to text... Please wait.";
             status.classList.remove("hidden");
-            finalText = text ? `${text}\n\n[Sign Language Video Report Submitted]` : "[Sign Language Video Report Submitted by Deaf/Mute Victim]";
+
+            const form = new FormData();
+            form.append("file", videoFile);
+            
+            try {
+                const response = await fetch(`${API_BASE}/cases/transcribe`, { method: "POST", body: form });
+                const data = await json(response);
+
+                if (response.ok && data.success && data.transcript) {
+                    finalText = text ? `${text}\n\n[Video transcript]\n${data.transcript}` : data.transcript;
+                    status.textContent = "✓ Video transcript generated. Please review and edit it before submitting.";
+                } else {
+                    finalText = text || "[Video Report Submitted]";
+                    status.textContent = "Video attached. Proceeding to review.";
+                }
+            } catch (err) {
+                console.warn("Transcription fallback:", err);
+                finalText = text || "[Video Report Submitted]";
+                status.textContent = "Video attached. Proceeding to review.";
+            }
         } else if (audio) {
             status.textContent = "Converting your audio to text... Please wait.";
             status.classList.remove("hidden");
 
             const form = new FormData();
-            form.append("audio", audio);
-            const response = await fetch(`${API_BASE}/cases/transcribe`, { method: "POST", body: form });
-            const data = await json(response);
+            form.append("file", audio);
+            
+            try {
+                const response = await fetch(`${API_BASE}/cases/transcribe`, { method: "POST", body: form });
+                const data = await json(response);
 
-            if (!response.ok || !data.success) {
-                throw new Error(data.message || data.error || "Could not transcribe the audio.");
+                if (response.ok && data.success && data.transcript) {
+                    finalText = text ? `${text}\n\n[Voice transcript]\n${data.transcript}` : data.transcript;
+                    status.textContent = "✓ Transcript generated. Please review and edit it before submitting.";
+                } else {
+                    finalText = text || "Audio recording submitted.";
+                    status.textContent = "Audio attached. Proceeding to review.";
+                }
+            } catch (err) {
+                console.warn("Audio transcription fallback:", err);
+                finalText = text || "Audio recording submitted.";
+                status.textContent = "Audio attached. Proceeding to review.";
             }
-
-            const transcript = String(data.transcript || "").trim();
-            if (!transcript) throw new Error("No speech was detected in the audio recording.");
-
-            finalText = text ? `${text}\n\n[Voice transcript]\n${transcript}` : transcript;
-            status.textContent = "✓ Transcript generated. Please review and edit it before submitting.";
         } else {
             status.textContent = "";
             status.classList.add("hidden");
@@ -304,9 +331,15 @@ async function continueToReview() {
         }
 
         const videoWrap = $("review-video-wrap");
-        if (signVideo) {
+        if (videoFile) {
             videoWrap.classList.remove("hidden");
-            $("review-video").src = videoRecordedUrl;
+            const videoElement = $("review-video");
+            if (videoRecordedUrl) {
+                videoElement.src = videoRecordedUrl;
+            } else if (videoRecordedBlob) {
+                videoElement.src = URL.createObjectURL(videoRecordedBlob);
+            }
+            videoElement.load();
         } else {
             videoWrap.classList.add("hidden");
             $("review-video").removeAttribute("src");
@@ -323,9 +356,9 @@ async function continueToReview() {
 
 async function submitVictimReport() {
     const audio = selectedAudio();
-    const signVideo = selectedSignVideo();
+    const videoFile = selectedVideo();
     const statement = $("review-text").value.trim();
-    if (!ngoSlug || (!statement && !audio && !signVideo)) return;
+    if (!ngoSlug || (!statement && !audio && !videoFile)) return;
 
     $("submit-btn").disabled = true; 
     showScreen(5);
@@ -343,12 +376,7 @@ async function submitVictimReport() {
         form.append("source", reportMethod);
         
         if (audio) form.append("audio", audio);
-        if (signVideo) {
-            form.append("video", signVideo);
-            form.append("isDisabilityReport", "true");
-        } else {
-            form.append("isDisabilityReport", "false");
-        }
+        if (videoFile) form.append("video", videoFile);
 
         const response = await fetch(`${API_BASE}/cases/submit`, { method:"POST", body:form });
         const data = await json(response);
@@ -374,7 +402,6 @@ function setupOrg() {
     const savedId = localStorage.getItem("ngoId");
     if (savedId) showOrgPortal();
 
-    // Use CSS classes instead of inline style.display to preserve original layout/inputs
     loginTab.addEventListener("click", (e) => {
         e.preventDefault();
         loginForm.classList.remove("hidden");
@@ -481,12 +508,10 @@ function renderCases(container,cases){
     if(!cases.length){container.innerHTML="<p>No cases have been submitted yet.</p>";return;}
     
     container.innerHTML=cases.map(c=> {
-        const disabilityBadge = c.isDisabilityReport ? `<span class="badge" style="background:#7c3aed;color:#fff;">♿ Sign Language</span>` : "";
         return `<div class="case-item" data-case="${escapeHtml(c.caseId)}">
             <div class="case-meta">
                 <strong>${escapeHtml(c.caseId)}</strong>
                 <span>${escapeHtml(c.source)}</span>
-                ${disabilityBadge}
                 <span class="badge ${String(c.severity||"").toLowerCase()}">${escapeHtml(c.severity||"Medium")}</span>
                 <span class="badge ${String(c.priority||"").toLowerCase()}">${escapeHtml(c.priority||"NORMAL")}</span>
                 <span>${escapeHtml(c.status||"NEW")}</span>
@@ -523,11 +548,10 @@ function caseDetailHtml(c){
     const priority=String(c.priority||"").trim();
     const priorityHtml=priority?`<div class="case-meta" style="margin-top:8px;">Priority: <span class="badge ${priority.toLowerCase()}">${escapeHtml(priority)}</span></div>`:"";
     
-    const disabilityNotice = c.isDisabilityReport ? `<div class="section-box" style="background:#f5f3ff;border-left:4px solid #7c3aed;"><b>♿ Deaf / Mute Support Note</b><p style="margin:5px 0 0;">This report was submitted via Sign Language video assistance.</p></div>` : "";
-    const videoBox = c.video?.filename ? `<div class="section-box"><b>Sign Language Video</b><video controls class="audio-preview" style="max-width:100%;" src="${API_BASE}/cases/${encodeURIComponent(c.caseId)}/video"></video><p class="muted" style="margin:6px 0 0;">${escapeHtml(c.video.originalName||c.video.filename)} · ${escapeHtml(formatFileSize(c.video.size||0))}</p></div>` : "";
+    const videoBox = c.video?.filename ? `<div class="section-box"><b>Video Report</b><video controls class="audio-preview" style="max-width:100%;" src="${API_BASE}/cases/${encodeURIComponent(c.caseId)}/video"></video><p class="muted" style="margin:6px 0 0;">${escapeHtml(c.video.originalName||c.video.filename)} · ${escapeHtml(formatFileSize(c.video.size||0))}</p></div>` : "";
     const audioBox = c.audio?.filename ? `<div class="section-box"><b>Original audio</b><audio controls class="audio-preview" src="${API_BASE}/cases/${encodeURIComponent(c.caseId)}/audio"></audio><p class="muted" style="margin:6px 0 0;">${escapeHtml(c.audio.originalName||c.audio.filename)} · ${escapeHtml(formatFileSize(c.audio.size||0))}</p></div>` : "";
 
-    return `${disabilityNotice}<div class="detail-grid"><div><b>Name</b><div class="detail-value">${escapeHtml(v.name)}</div></div><div><b>Age</b><div class="detail-value">${escapeHtml(v.age)}</div></div><div><b>Gender</b><div class="detail-value">${escapeHtml(v.gender)}</div></div><div><b>Phone</b><div class="detail-value">${escapeHtml(v.phone)}</div></div><div><b>Email</b><div class="detail-value">${escapeHtml(v.email)}</div></div><div><b>Address</b><div class="detail-value">${escapeHtml(v.address)}</div></div></div><div class="section-box"><b>Statement / reviewed transcript</b><div class="detail-value">${escapeHtml(c.statement||"Recording submitted.")}</div></div><div class="section-box"><b>AI-assisted assessment</b><div class="case-meta" style="margin-top:8px;">Severity: <span class="badge ${String(c.severity||"").toLowerCase()}">${escapeHtml(c.severity||"Medium")}</span></div>${priorityHtml}<div style="margin-top:12px;"><b>AI Summary</b><p style="margin:7px 0 0;">${escapeHtml(c.aiSummary||"Assessment not available.")}</p></div>${flagHtml}<p class="muted" style="margin-top:12px;">This is an assessment aid for human review, not a medical or psychological diagnosis.</p></div>${videoBox}${audioBox}<div class="section-box"><b>Status</b><select id="status-select"><option value="NEW" ${c.status==="NEW"?"selected":""}>NEW</option><option value="IN_REVIEW" ${c.status==="IN_REVIEW"?"selected":""}>IN_REVIEW</option><option value="RESOLVED" ${c.status==="RESOLVED"?"selected":""}>RESOLVED</option></select><button class="btn small-btn" id="status-save">Update Status</button><hr><b>Assigned counsellor</b><input id="counsellor-input" value="${escapeHtml(c.counsellor||"")}" placeholder="Counsellor name"><button class="btn small-btn" id="counsellor-save">Save Counsellor</button></div>`;
+    return `<div class="detail-grid"><div><b>Name</b><div class="detail-value">${escapeHtml(v.name)}</div></div><div><b>Age</b><div class="detail-value">${escapeHtml(v.age)}</div></div><div><b>Gender</b><div class="detail-value">${escapeHtml(v.gender)}</div></div><div><b>Phone</b><div class="detail-value">${escapeHtml(v.phone)}</div></div><div><b>Email</b><div class="detail-value">${escapeHtml(v.email)}</div></div><div><b>Address</b><div class="detail-value">${escapeHtml(v.address)}</div></div></div><div class="section-box"><b>Statement / reviewed transcript</b><div class="detail-value">${escapeHtml(c.statement||"Recording submitted.")}</div></div><div class="section-box"><b>AI-assisted assessment</b><div class="case-meta" style="margin-top:8px;">Severity: <span class="badge ${String(c.severity||"").toLowerCase()}">${escapeHtml(c.severity||"Medium")}</span></div>${priorityHtml}<div style="margin-top:12px;"><b>AI Summary</b><p style="margin:7px 0 0;">${escapeHtml(c.aiSummary||"Assessment not available.")}</p></div>${flagHtml}<p class="muted" style="margin-top:12px;">This is an assessment aid for human review, not a medical or psychological diagnosis.</p></div>${videoBox}${audioBox}<div class="section-box"><b>Status</b><select id="status-select"><option value="NEW" ${c.status==="NEW"?"selected":""}>NEW</option><option value="IN_REVIEW" ${c.status==="IN_REVIEW"?"selected":""}>IN_REVIEW</option><option value="RESOLVED" ${c.status==="RESOLVED"?"selected":""}>RESOLVED</option></select><button class="btn small-btn" id="status-save">Update Status</button><hr><b>Assigned counsellor</b><input id="counsellor-input" value="${escapeHtml(c.counsellor||"")}" placeholder="Counsellor name"><button class="btn small-btn" id="counsellor-save">Save Counsellor</button></div>`;
 }
 
 async function saveCasePatch(body){

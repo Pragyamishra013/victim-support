@@ -6,7 +6,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 
-// Configure Multer for Audio & Sign Language Video uploads
+// Configure Multer for Audio & Video uploads
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
         const uploadDir = path.join(__dirname, '../uploads');
@@ -27,26 +27,22 @@ const upload = multer({
 });
 
 // Helper Function: Call Gemini API for Dynamic AI Assessment
-async function analyzeReportWithAI(statement, isDisability) {
+async function analyzeReportWithAI(statement) {
     const apiKey = process.env.GEMINI_API_KEY;
     
-    // Fallback Keyword Analysis if API Key is missing or fails
     const textLower = (statement || "").toLowerCase();
-    const isUrgentKeywords = textLower.includes("threat") || textLower.includes("death") || textLower.includes("follow") || textLower.includes("danger") || textLower.includes("kill") || textLower.includes("abuse") || textLower.includes("stalk");
+    const isUrgentKeywords = textLower.includes("threat") || textLower.includes("death") || textLower.includes("follow") || textLower.includes("danger") || textLower.includes("kill") || textLower.includes("abuse") || textLower.includes("stalk") || textLower.includes("rape");
 
     let fallbackSeverity = isUrgentKeywords ? "High" : "Medium";
     let fallbackPriority = isUrgentKeywords ? "URGENT" : "NORMAL";
     let fallbackFlags = [];
     
-    if (textLower.includes("threat") || textLower.includes("death")) fallbackFlags.push("Life Threat / Immediate Risk");
+    if (textLower.includes("threat") || textLower.includes("death") || textLower.includes("kill")) fallbackFlags.push("Life Threat / Immediate Risk");
     if (textLower.includes("follow") || textLower.includes("stalk")) fallbackFlags.push("Stalking & Harassment");
-    if (isDisability) fallbackFlags.push("Sign Language Video Report", "Deaf/Mute Accessibility Assistance");
 
     if (fallbackFlags.length === 0) fallbackFlags.push("Standard Grievance");
 
-    let fallbackSummary = isDisability 
-        ? "Deaf/Mute victim submitted a Sign Language video report. Requires priority caseworker and sign interpreter support."
-        : `Victim reported: "${statement.slice(0, 150)}". Evaluated for priority intervention.`;
+    let fallbackSummary = `Victim reported: "${statement.slice(0, 150)}". Evaluated for priority intervention.`;
 
     if (!apiKey) {
         return { severity: fallbackSeverity, priority: fallbackPriority, aiSummary: fallbackSummary, aiFlags: fallbackFlags };
@@ -60,7 +56,6 @@ async function analyzeReportWithAI(statement, isDisability) {
 - aiFlags (an array of 2-3 short flag strings highlighting key concerns)
 
 Grievance Statement: "${statement}"
-Is Sign Language/Disability Video: ${isDisability}
 
 Return ONLY valid JSON format like:
 {"severity": "High", "priority": "URGENT", "aiSummary": "...", "aiFlags": ["...", "..."]}`;
@@ -90,10 +85,10 @@ Return ONLY valid JSON format like:
     }
 }
 
-// Submit Case Route
+// Submit Case Route (Supports Text, Audio, and Video with transcription)
 router.post('/submit', upload.fields([{ name: 'audio', maxCount: 1 }, { name: 'video', maxCount: 1 }]), async (req, res) => {
     try {
-        const { ngoSlug, name, age, gender, phone, address, email, statement, source, isDisabilityReport } = req.body;
+        const { ngoSlug, name, age, gender, phone, address, email, statement, source } = req.body;
 
         const ngo = await Ngo.findOne({ slug: ngoSlug });
         if (!ngo) {
@@ -107,10 +102,9 @@ router.post('/submit', upload.fields([{ name: 'audio', maxCount: 1 }, { name: 'v
         const caseId = `NIVARAN-${String(caseCount + 101).padStart(4, '0')}`;
 
         const cleanStatement = statement ? statement.trim() : "";
-        const isDisability = isDisabilityReport === 'true' || !!videoFile;
 
-        // Dynamic Gemini AI Analysis
-        const aiAssessment = await analyzeReportWithAI(cleanStatement, isDisability);
+        // Dynamic Gemini AI Analysis based on transcript/statement
+        const aiAssessment = await analyzeReportWithAI(cleanStatement);
 
         const newCase = new Case({
             caseId,
@@ -123,9 +117,8 @@ router.post('/submit', upload.fields([{ name: 'audio', maxCount: 1 }, { name: 'v
                 address: address || '',
                 email: email || ''
             },
-            statement: cleanStatement || (isDisability ? "[Sign Language Video Report Submitted by Deaf/Mute Victim]" : "Recording submitted."),
-            source: source || (videoFile ? 'signvideo' : 'text'),
-            isDisabilityReport: isDisability,
+            statement: cleanStatement || (videoFile ? "Video report submitted." : audioFile ? "Audio recording submitted." : "Report submitted."),
+            source: source || (videoFile ? 'video' : audioFile ? 'audio' : 'text'),
             audio: audioFile ? {
                 filename: audioFile.filename,
                 originalName: audioFile.originalname,
@@ -177,34 +170,97 @@ router.get('/:caseId', async (req, res) => {
     }
 });
 
-// Stream Audio
+// Stream Audio Route with HTTP Range Request Support
 router.get('/:caseId/audio', async (req, res) => {
     try {
         const caseItem = await Case.findOne({ caseId: req.params.caseId });
         if (!caseItem || !caseItem.audio || !caseItem.audio.path) {
             return res.status(404).json({ success: false, message: 'Audio file not found.' });
         }
-        if (!fs.existsSync(caseItem.audio.path)) {
+
+        const absolutePath = path.resolve(caseItem.audio.path);
+        if (!fs.existsSync(absolutePath)) {
             return res.status(404).json({ success: false, message: 'Audio file missing from server storage.' });
         }
-        res.sendFile(path.resolve(caseItem.audio.path));
+
+        const stat = fs.statSync(absolutePath);
+        const fileSize = stat.size;
+        const range = req.headers.range;
+
+        if (range) {
+            const parts = range.replace(/bytes=/, "").split("-");
+            const start = parseInt(parts[0], 10);
+            const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+            const chunksize = (end - start) + 1;
+            const file = fs.createReadStream(absolutePath, { start, end });
+            
+            const head = {
+                'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+                'Accept-Ranges': 'bytes',
+                'Content-Length': chunksize,
+                'Content-Type': 'audio/webm',
+            };
+
+            res.writeHead(206, head);
+            file.pipe(res);
+        } else {
+            const head = {
+                'Content-Length': fileSize,
+                'Content-Type': 'audio/webm',
+            };
+            res.writeHead(200, head);
+            fs.createReadStream(absolutePath).pipe(res);
+        }
     } catch (error) {
+        console.error("Audio streaming error:", error);
         res.status(500).json({ success: false, message: 'Error streaming audio.' });
     }
 });
 
-// Stream Video
+// Stream Video Route with HTTP Range Request Support for HTML5 video player
 router.get('/:caseId/video', async (req, res) => {
     try {
         const caseItem = await Case.findOne({ caseId: req.params.caseId });
         if (!caseItem || !caseItem.video || !caseItem.video.path) {
             return res.status(404).json({ success: false, message: 'Video file not found.' });
         }
-        if (!fs.existsSync(caseItem.video.path)) {
+        
+        const absolutePath = path.resolve(caseItem.video.path);
+        if (!fs.existsSync(absolutePath)) {
             return res.status(404).json({ success: false, message: 'Video file missing from server storage.' });
         }
-        res.sendFile(path.resolve(caseItem.video.path));
+
+        const stat = fs.statSync(absolutePath);
+        const fileSize = stat.size;
+        const range = req.headers.range;
+
+        // Support HTTP Range Requests (Essential for WebM / MP4 video seeking and duration decoding)
+        if (range) {
+            const parts = range.replace(/bytes=/, "").split("-");
+            const start = parseInt(parts[0], 10);
+            const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+            const chunksize = (end - start) + 1;
+            const file = fs.createReadStream(absolutePath, { start, end });
+            
+            const head = {
+                'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+                'Accept-Ranges': 'bytes',
+                'Content-Length': chunksize,
+                'Content-Type': 'video/webm',
+            };
+
+            res.writeHead(206, head);
+            file.pipe(res);
+        } else {
+            const head = {
+                'Content-Length': fileSize,
+                'Content-Type': 'video/webm',
+            };
+            res.writeHead(200, head);
+            fs.createReadStream(absolutePath).pipe(res);
+        }
     } catch (error) {
+        console.error("Video streaming error:", error);
         res.status(500).json({ success: false, message: 'Error streaming video.' });
     }
 });
@@ -233,18 +289,20 @@ router.patch('/:caseId', async (req, res) => {
     }
 });
 
-// Groq Speech-to-Text Transcription Route
-router.post('/transcribe', upload.single('audio'), async (req, res) => {
+// Groq Speech-to-Text Transcription Route (Supports both Audio and Video files)
+router.post('/transcribe', upload.single('file'), async (req, res) => {
     try {
-        if (!req.file) {
-            return res.status(400).json({ success: false, message: 'No audio file provided.' });
+        const uploadedFile = req.file || (req.files && req.files['audio'] ? req.files['audio'][0] : null) || (req.files && req.files['video'] ? req.files['video'][0] : null);
+        
+        if (!uploadedFile) {
+            return res.status(400).json({ success: false, message: 'No audio or video file provided for transcription.' });
         }
 
-        const fileBuffer = fs.readFileSync(req.file.path);
-        const blob = new Blob([fileBuffer], { type: req.file.mimetype || 'audio/webm' });
+        const fileBuffer = fs.readFileSync(uploadedFile.path);
+        const blob = new Blob([fileBuffer], { type: uploadedFile.mimetype || 'audio/webm' });
         
         const formData = new FormData();
-        formData.append('file', blob, req.file.originalname);
+        formData.append('file', blob, uploadedFile.originalname);
         formData.append('model', 'whisper-large-v3');
 
         const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
