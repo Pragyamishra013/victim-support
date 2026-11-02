@@ -1,361 +1,563 @@
-const express = require('express');
+const express = require("express");
+const fs = require("fs");
+const path = require("path");
+const multer = require("multer");
+const os = require("os");
+const { spawn } = require("child_process");
+const ffmpegPath = require("ffmpeg-static");
+const Case = require("../models/case");
+const Ngo = require("../models/ngo");
+const authenticateNgo = require("../middleware/auth");
+
 const router = express.Router();
-const Case = require('../models/case');
-const Ngo = require('../models/ngo');
-const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
+const uploadsDir = path.join(__dirname, "..", "uploads");
+fs.mkdirSync(uploadsDir, { recursive: true });
 
-// Configure Multer for Audio & Video uploads
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        const uploadDir = path.join(__dirname, '../uploads');
-        if (!fs.existsSync(uploadDir)) {
-            fs.mkdirSync(uploadDir, { recursive: true });
-        }
-        cb(null, uploadDir);
-    },
-    filename: (req, file, cb) => {
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, uniqueSuffix + '-' + file.originalname);
+const diskUpload = multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, uploadsDir),
+    filename: (_req, file, cb) => {
+        const ext = path.extname(file.originalname || "") || ".webm";
+        const safeExt = ext.toLowerCase().replace(/[^a-z0-9.]/g, "") || ".webm";
+        cb(null, `media-${Date.now()}-${Math.random().toString(36).slice(2, 9)}${safeExt}`);
     }
 });
 
-const upload = multer({ 
-    storage: storage,
-    limits: { fileSize: 50 * 1024 * 1024, fieldSize: 50 * 1024 * 1024 }
+const upload = multer({
+    storage: diskUpload,
+    limits: { fileSize: 25 * 1024 * 1024 }
 });
 
-// Helper Function: Call Gemini API for Dynamic AI Assessment
-async function analyzeReportWithAI(statement) {
+const memoryUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 25 * 1024 * 1024 }
+});
+
+function fallbackAssessment(statement) {
+    const text = String(statement || "").toLowerCase();
+    const flags = [];
+
+    const critical = [
+        "kill", "killed", "murder", "suicide", "self harm", "self-harm",
+        "emergency", "life threat", "life-threatening", "attack", "beaten",
+        "being beaten", "going to die", "danger"
+    ];
+    const high = [
+        "threat", "threatened", "abuse", "abused", "harass", "harassment",
+        "stalk", "stalking", "violence", "violent", "blackmail", "coercion"
+    ];
+
+    if (critical.some(word => text.includes(word))) {
+        flags.push("Possible immediate safety risk");
+        return {
+            severity: "Critical",
+            priority: "URGENT",
+            flags,
+            summary: "The report contains language that may indicate an immediate safety risk. Human review is recommended."
+        };
+    }
+
+    if (high.some(word => text.includes(word))) {
+        flags.push("Possible ongoing harm or threat");
+        return {
+            severity: "High",
+            priority: "HIGH",
+            flags,
+            summary: "The report contains language about possible harassment, abuse, threat, violence, or related harm. Human review is recommended."
+        };
+    }
+
+    return {
+        severity: "Medium",
+        priority: "NORMAL",
+        flags: [],
+        summary: "A support request or grievance was received. Human review is recommended."
+    };
+}
+
+function normalizeAssessment(value, statement) {
+    const fallback = fallbackAssessment(statement);
+    const severity = ["Critical", "High", "Medium", "Low"].includes(String(value?.severity))
+        ? String(value.severity)
+        : fallback.severity;
+    const priorityMap = {
+        Critical: "URGENT",
+        High: "HIGH",
+        Medium: "NORMAL",
+        Low: "LOW"
+    };
+    const priority = ["URGENT", "HIGH", "NORMAL", "LOW"].includes(String(value?.priority))
+        ? String(value.priority)
+        : priorityMap[severity] || fallback.priority;
+    const flags = Array.isArray(value?.flags)
+        ? value.flags.map(item => String(item).trim()).filter(Boolean).slice(0, 8)
+        : fallback.flags;
+    const summary = String(value?.summary || "").trim() || fallback.summary;
+
+    return { severity, priority, flags, summary };
+}
+
+async function assessWithGemini(statement) {
     const apiKey = process.env.GEMINI_API_KEY;
-    
-    const textLower = (statement || "").toLowerCase();
-    const isUrgentKeywords = textLower.includes("threat") || textLower.includes("death") || textLower.includes("follow") || textLower.includes("danger") || textLower.includes("kill") || textLower.includes("abuse") || textLower.includes("stalk") || textLower.includes("rape");
-
-    let fallbackSeverity = isUrgentKeywords ? "High" : "Medium";
-    let fallbackPriority = isUrgentKeywords ? "URGENT" : "NORMAL";
-    let fallbackFlags = [];
-    
-    if (textLower.includes("threat") || textLower.includes("death") || textLower.includes("kill")) fallbackFlags.push("Life Threat / Immediate Risk");
-    if (textLower.includes("follow") || textLower.includes("stalk")) fallbackFlags.push("Stalking & Harassment");
-
-    if (fallbackFlags.length === 0) fallbackFlags.push("Standard Grievance");
-
-    let fallbackSummary = `Victim reported: "${statement.slice(0, 150)}". Evaluated for priority intervention.`;
-
-    if (!apiKey) {
-        return { severity: fallbackSeverity, priority: fallbackPriority, aiSummary: fallbackSummary, aiFlags: fallbackFlags };
+    if (!apiKey || apiKey === "PASTE_YOUR_GEMINI_API_KEY_HERE") {
+        return null;
     }
+
+    const prompt = `You are an AI assessment assistant for a victim-support reporting portal.
+Assess ONLY the submitted report below. Do not diagnose a medical or psychiatric condition.
+Do not invent events, injuries, perpetrators, motives, or legal conclusions.
+Return a workflow aid for a human NGO reviewer.
+
+Severity definitions:
+- Critical: immediate danger, severe violence, suicide/self-harm, or clearly urgent safety concern.
+- High: serious ongoing harm, threats, abuse, violence, coercion, stalking, blackmail, or serious safety concern.
+- Medium: meaningful support/grievance request without a clear immediate/high-risk indicator.
+- Low: routine/low-urgency support request without a clear safety concern.
+
+Priority must correspond to severity: Critical=URGENT, High=HIGH, Medium=NORMAL, Low=LOW.
+Flags should be concise indicators grounded in the report. Use an empty array when no clear flag is present.
+
+REPORT:\n${String(statement || "").slice(0, 12000)}`;
+
+    const response = await fetch(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent",
+        {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "x-goog-api-key": apiKey
+            },
+            body: JSON.stringify({
+                contents: [{ role: "user", parts: [{ text: prompt }] }],
+                generationConfig: {
+                    temperature: 0.2,
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: "OBJECT",
+                        properties: {
+                            severity: { type: "STRING", enum: ["Critical", "High", "Medium", "Low"] },
+                            priority: { type: "STRING", enum: ["URGENT", "HIGH", "NORMAL", "LOW"] },
+                            flags: { type: "ARRAY", items: { type: "STRING" } },
+                            summary: { type: "STRING" }
+                        },
+                        required: ["severity", "priority", "flags", "summary"]
+                    }
+                }
+            })
+        }
+    );
+
+    const raw = await response.text();
+    let data = {};
+    try { data = raw ? JSON.parse(raw) : {}; } catch (_) { data = {}; }
+
+    if (!response.ok) {
+        throw new Error(data?.error?.message || "Gemini assessment request failed.");
+    }
+
+    const text = data?.candidates?.[0]?.content?.parts
+        ?.map(part => part?.text || "")
+        .join("")
+        .trim();
+
+    if (!text) throw new Error("Gemini returned an empty assessment.");
+
+    return normalizeAssessment(JSON.parse(text), statement);
+}
+
+async function assessCase(statement) {
+    try {
+        const ai = await assessWithGemini(statement);
+        if (ai) return { ...ai, provider: "Gemini" };
+    } catch (error) {
+        console.error("Gemini assessment unavailable; using safe fallback:", error.message);
+    }
+
+    return { ...fallbackAssessment(statement), provider: "Fallback" };
+}
+
+function makeCaseId() {
+    return `CASE-${Date.now().toString().slice(-8)}-${Math.floor(10 + Math.random() * 90)}`;
+}
+
+function safeExtension(originalName, mimeType) {
+    const ext = path.extname(originalName || "").toLowerCase().replace(/[^a-z0-9.]/g, "");
+    if (ext) return ext;
+    const map = {
+        "audio/webm": ".webm",
+        "audio/ogg": ".ogg",
+        "audio/mp4": ".mp4",
+        "audio/mpeg": ".mp3",
+        "audio/wav": ".wav",
+        "audio/x-wav": ".wav",
+        "audio/aac": ".aac"
+    };
+    return map[mimeType] || ".audio";
+}
+
+async function groqTranscribe(buffer, mimeType, originalName) {
+    const apiKey = process.env.GROQ_API_KEY;
+    if (!apiKey || apiKey === "PASTE_YOUR_GROQ_API_KEY_HERE") {
+        const error = new Error("Speech-to-text is not configured. Add GROQ_API_KEY to backend/.env and restart the server.");
+        error.code = "GROQ_NOT_CONFIGURED";
+        throw error;
+    }
+
+    if (!buffer?.length) {
+        const error = new Error("The audio file is empty.");
+        error.code = "EMPTY_AUDIO";
+        throw error;
+    }
+
+    const form = new FormData();
+    form.append(
+        "file",
+        new Blob([buffer], { type: mimeType || "audio/webm" }),
+        originalName || `voice-report-${Date.now()}${safeExtension(originalName, mimeType)}`
+    );
+    form.append("model", "whisper-large-v3");
+    form.append("response_format", "json");
+    form.append("language", "en");
+    form.append("temperature", "0");
+
+    let response;
+    try {
+        response = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${apiKey}` },
+            body: form
+        });
+    } catch (networkError) {
+        const error = new Error(`Could not connect to Groq speech-to-text service: ${networkError.message}`);
+        error.code = "GROQ_NETWORK_ERROR";
+        throw error;
+    }
+
+    const raw = await response.text();
+    let data = {};
+    try { data = raw ? JSON.parse(raw) : {}; } catch (_) { data = {}; }
+
+    if (!response.ok) {
+        const error = new Error(data?.error?.message || data?.message || "Groq speech-to-text request failed.");
+        error.code = "GROQ_API_ERROR";
+        error.status = response.status;
+        throw error;
+    }
+
+    const transcript = String(data?.text || "").trim();
+    if (!transcript) {
+        const error = new Error("No speech could be detected in this audio recording.");
+        error.code = "EMPTY_TRANSCRIPT";
+        throw error;
+    }
+
+    return transcript;
+}
+
+// Extract audio from an uploaded video using FFmpeg.
+async function extractAudioFromVideo(videoBuffer, mimeType) {
+    if (!videoBuffer?.length) {
+        throw Object.assign(new Error("The uploaded video is empty."), { code: "EMPTY_VIDEO" });
+    }
+
+    if (!ffmpegPath) {
+        throw Object.assign(new Error("FFmpeg binary is unavailable."), { code: "FFMPEG_NOT_AVAILABLE" });
+    }
+
+    const cleanMimeType = String(mimeType || "")
+        .split(";")[0]
+        .trim()
+        .toLowerCase();
+
+    const videoExtensions = {
+        "video/webm": ".webm",
+        "video/mp4": ".mp4",
+        "video/quicktime": ".mov",
+        "video/x-matroska": ".mkv",
+        "video/ogg": ".ogv"
+    };
+
+    if (!cleanMimeType.startsWith("video/")) {
+        throw Object.assign(new Error("Please upload a valid video file."), { code: "INVALID_VIDEO_TYPE" });
+    }
+
+    const extension = videoExtensions[cleanMimeType] || ".video";
+    const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "nivaran-video-"));
+    const inputPath = path.join(tempDir, `input${extension}`);
+    const outputPath = path.join(tempDir, "extracted-audio.mp3");
 
     try {
-        const prompt = `Analyze this victim grievance report and return a JSON object with:
-- severity ("High", "Medium", "Low")
-- priority ("URGENT", "HIGH", "NORMAL")
-- aiSummary (a brief 2-sentence summary of the victim's situation)
-- aiFlags (an array of 2-3 short flag strings highlighting key concerns)
+        await fs.promises.writeFile(inputPath, videoBuffer);
 
-Grievance Statement: "${statement}"
+        await new Promise((resolve, reject) => {
+            const ffmpeg = spawn(ffmpegPath, [
+                "-nostdin", "-hide_banner", "-loglevel", "error",
+                "-i", inputPath,
+                "-vn", "-ac", "1", "-ar", "16000",
+                "-c:a", "libmp3lame", "-b:a", "64k",
+                "-y", outputPath
+            ], { windowsHide: true });
 
-Return ONLY valid JSON format like:
-{"severity": "High", "priority": "URGENT", "aiSummary": "...", "aiFlags": ["...", "..."]}`;
+            let stderr = "";
+            let settled = false;
+            const timeout = setTimeout(() => {
+                if (settled) return;
+                settled = true;
+                ffmpeg.kill();
+                reject(new Error("Video audio extraction timed out. Please try a shorter video."));
+            }, 120000);
 
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: [{ parts: [{ text: prompt }] }]
-            })
+            ffmpeg.stderr.on("data", chunk => {
+                stderr = (stderr + chunk.toString()).slice(-10000);
+            });
+
+            ffmpeg.on("error", error => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timeout);
+                reject(error);
+            });
+
+            ffmpeg.on("close", code => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timeout);
+                if (code === 0) resolve();
+                else reject(new Error(stderr.trim() || `FFmpeg exited with code ${code}.`));
+            });
         });
 
-        const data = await response.json();
-        const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-        const cleanJson = rawText.replace(/```json/g, "").replace(/```/g, "").trim();
-        const parsed = JSON.parse(cleanJson);
+        const audioStats = await fs.promises.stat(outputPath);
+        if (!audioStats.size) throw new Error("No audio track was found in this video.");
+        if (audioStats.size > 25 * 1024 * 1024) {
+            throw Object.assign(
+                new Error("The extracted audio is too large. Please upload a shorter video."),
+                { code: "AUDIO_TOO_LARGE" }
+            );
+        }
 
-        return {
-            severity: parsed.severity || fallbackSeverity,
-            priority: parsed.priority || fallbackPriority,
-            aiSummary: parsed.aiSummary || fallbackSummary,
-            aiFlags: parsed.aiFlags || fallbackFlags
-        };
-    } catch (err) {
-        console.error("Gemini AI API Call Error, using smart keyword fallback:", err);
-        return { severity: fallbackSeverity, priority: fallbackPriority, aiSummary: fallbackSummary, aiFlags: fallbackFlags };
+        return await fs.promises.readFile(outputPath);
+    } finally {
+        await fs.promises.rm(tempDir, { recursive: true, force: true });
     }
 }
 
-// Submit Case Route (Supports Text, Audio, and Video with transcription)
-router.post('/submit', upload.fields([{ name: 'audio', maxCount: 1 }, { name: 'video', maxCount: 1 }]), async (req, res) => {
+router.post("/transcribe", memoryUpload.single("audio"), async (req, res) => {
     try {
-        const { ngoSlug, name, age, gender, phone, address, email, statement, source } = req.body;
+        if (!req.file) return res.status(400).json({ success: false, message: "Please provide an audio recording to transcribe." });
+        const transcript = await groqTranscribe(req.file.buffer, req.file.mimetype, req.file.originalname);
+        res.json({ success: true, transcript, message: "Audio transcribed successfully." });
+    } catch (error) {
+        console.error("Speech-to-text error:", error);
+        if (error.code === "GROQ_NOT_CONFIGURED") return res.status(503).json({ success: false, message: error.message });
+        if (error.code === "EMPTY_TRANSCRIPT") return res.status(422).json({ success: false, message: error.message });
+        res.status(500).json({ success: false, message: "Could not transcribe the audio. Please try again or use the written report option.", error: error.message });
+    }
+});
 
-        const ngo = await Ngo.findOne({ slug: ngoSlug });
-        if (!ngo) {
-            return res.status(404).json({ success: false, message: 'Organization not found.' });
+// Transcribe speech contained in an uploaded or recorded video.
+router.post("/transcribe-video", memoryUpload.single("video"), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({
+                success: false,
+                message: "Please provide a video recording to transcribe."
+            });
         }
 
-        const audioFile = req.files && req.files['audio'] ? req.files['audio'][0] : null;
-        const videoFile = req.files && req.files['video'] ? req.files['video'][0] : null;
+        const audioBuffer = await extractAudioFromVideo(req.file.buffer, req.file.mimetype);
+        const transcript = await groqTranscribe(audioBuffer, "audio/mpeg", "video-audio.mp3");
 
-        const caseCount = await Case.countDocuments();
-        const caseId = `NIVARAN-${String(caseCount + 101).padStart(4, '0')}`;
-
-        const cleanStatement = statement ? statement.trim() : "";
-
-        // Dynamic Gemini AI Analysis based on transcript/statement
-        const aiAssessment = await analyzeReportWithAI(cleanStatement);
-
-        const newCase = new Case({
-            caseId,
-            ngoId: ngo._id,
-            victimDetails: {
-                name: name || 'Anonymous',
-                age: age || '',
-                gender: gender || '',
-                phone: phone || '',
-                address: address || '',
-                email: email || ''
-            },
-            statement: cleanStatement || (videoFile ? "Video report submitted." : audioFile ? "Audio recording submitted." : "Report submitted."),
-            source: source || (videoFile ? 'video' : audioFile ? 'audio' : 'text'),
-            audio: audioFile ? {
-                filename: audioFile.filename,
-                originalName: audioFile.originalname,
-                path: audioFile.path,
-                size: audioFile.size
-            } : undefined,
-            video: videoFile ? {
-                filename: videoFile.filename,
-                originalName: videoFile.originalname,
-                path: videoFile.path,
-                size: videoFile.size
-            } : undefined,
-            aiSummary: aiAssessment.aiSummary,
-            severity: aiAssessment.severity,
-            priority: aiAssessment.priority,
-            aiFlags: aiAssessment.aiFlags,
-            status: 'NEW'
+        return res.json({
+            success: true,
+            transcript,
+            message: "Video audio transcribed successfully."
         });
+    } catch (error) {
+        console.error("Video transcription error:", error);
 
-        await newCase.save();
-        res.status(201).json({ success: true, caseId: newCase.caseId });
+        if (error.code === "GROQ_NOT_CONFIGURED") {
+            return res.status(503).json({ success: false, message: error.message });
+        }
+        if (["EMPTY_TRANSCRIPT", "EMPTY_VIDEO"].includes(error.code)) {
+            return res.status(422).json({ success: false, message: error.message });
+        }
+        if (error.code === "AUDIO_TOO_LARGE") {
+            return res.status(413).json({ success: false, message: error.message });
+        }
+        if (["INVALID_VIDEO_TYPE", "FFMPEG_NOT_AVAILABLE"].includes(error.code)) {
+            return res.status(400).json({ success: false, message: error.message });
+        }
 
+        return res.status(500).json({
+            success: false,
+            message: "Could not transcribe the video. Please try another video or use the written report option.",
+            error: error.message
+        });
+    }
+});
+
+async function createCaseFromSubmission(req) {
+    const { ngoSlug, name, age, gender, phone, email, address, statement, source } = req.body || {};
+    if (!ngoSlug) throw Object.assign(new Error("NGO reporting link is missing."), { status: 400 });
+
+    const ngo = await Ngo.findOne({ slug: ngoSlug });
+    if (!ngo) throw Object.assign(new Error("Associated NGO was not found."), { status: 404 });
+
+    const audioFile = req.files?.audio?.[0] || null;
+    const videoFile = req.files?.video?.[0] || null;
+    const cleanStatement = String(statement || "").trim();
+    if (!cleanStatement && !audioFile && !videoFile) throw Object.assign(new Error("Please provide a written report, audio recording, or video recording."), { status: 400 });
+
+    const assessment = await assessCase(cleanStatement);
+    const audio = audioFile ? { filename: audioFile.filename, originalName: audioFile.originalname, mimeType: audioFile.mimetype, size: audioFile.size, uploadedAt: new Date() } : undefined;
+    const video = videoFile ? { filename: videoFile.filename, originalName: videoFile.originalname, mimeType: videoFile.mimetype, size: videoFile.size, uploadedAt: new Date() } : undefined;
+
+    return Case.create({
+        caseId: makeCaseId(),
+        ngoId: ngo._id,
+        victimDetails: {
+            name: String(name || "").trim(),
+            age: age ? Number(age) : null,
+            gender: String(gender || "").trim(),
+            phone: String(phone || "").trim(),
+            email: String(email || "").trim(),
+            address: String(address || "").trim()
+        },
+        statement: cleanStatement,
+        source: source || (audioFile ? "voice" : videoFile ? "video" : "text"),
+        severity: assessment.severity,
+        priority: assessment.priority,
+        aiSummary: assessment.summary,
+        aiFlags: assessment.flags,
+        audio,
+        video,
+        status: "NEW"
+    });
+}
+
+router.post("/submit", upload.fields([{ name: "audio", maxCount: 1 }, { name: "video", maxCount: 1 }]), async (req, res) => {
+    try {
+        const created = await createCaseFromSubmission(req);
+        res.status(201).json({ success: true, message: "Case submitted successfully.", caseId: created.caseId, case: created });
     } catch (error) {
         console.error("Case submission error:", error);
-        res.status(500).json({ success: false, message: error.message || 'Server error during submission.' });
+        res.status(error.status || 500).json({ success: false, message: error.message || "Could not submit the case.", error: error.message });
     }
 });
 
-// Get all cases for a specific NGO
-router.get('/ngo/:ngoId', async (req, res) => {
+// Backward-compatible JSON create endpoint used by the older victim script.
+router.post("/", async (req, res) => {
     try {
-        const cases = await Case.find({ ngoId: req.params.ngoId }).sort({ createdAt: -1 });
+        const statement = String(req.body?.statement || "").trim();
+        const hasVoice = req.body?.source === "voice" || req.body?.source === "text_and_voice";
+        if (!statement && !hasVoice) return res.status(400).json({ success: false, message: "Report statement is required." });
+
+        const assessment = await assessCase(statement);
+        const created = await Case.create({
+            caseId: makeCaseId(),
+            ngoId: req.body?.ngoId || undefined,
+            statement,
+            source: req.body?.source || "text",
+            severity: assessment.severity,
+            priority: assessment.priority,
+            aiSummary: assessment.summary,
+            aiFlags: assessment.flags,
+            status: "NEW"
+        });
+        res.status(201).json({ success: true, message: "Case created successfully.", case: created });
+    } catch (error) {
+        console.error("Legacy case creation error:", error);
+        res.status(500).json({ success: false, message: error.message || "Could not create case." });
+    }
+});
+
+router.get("/ngo/:ngoId", authenticateNgo, async (req, res) => {
+    try {
+        if (String(req.ngoId) !== String(req.params.ngoId)) return res.status(403).json({ success: false, message: "Access denied." });
+        const cases = await Case.find({ ngoId: req.ngoId }).sort({ createdAt: -1 });
         res.json({ success: true, cases });
     } catch (error) {
-        res.status(500).json({ success: false, message: 'Could not fetch cases.' });
+        res.status(500).json({ success: false, message: "Could not load cases.", error: error.message });
     }
 });
 
-// Get single case details
-router.get('/:caseId', async (req, res) => {
+router.get("/", async (_req, res) => {
     try {
-        const caseItem = await Case.findOne({ caseId: req.params.caseId });
-        if (!caseItem) {
-            return res.status(404).json({ success: false, message: 'Case not found.' });
-        }
-        res.json({ success: true, case: caseItem });
+        const cases = await Case.find().sort({ createdAt: -1 });
+        res.json({ success: true, cases });
     } catch (error) {
-        res.status(500).json({ success: false, message: 'Could not fetch case details.' });
+        res.status(500).json({ success: false, message: "Could not load cases.", error: error.message });
     }
 });
 
-// Stream Audio Route with HTTP Range Request Support
-router.get('/:caseId/audio', async (req, res) => {
+router.get("/:caseId/audio", authenticateNgo, async (req, res) => {
     try {
-        const caseItem = await Case.findOne({ caseId: req.params.caseId });
-        if (!caseItem || !caseItem.audio || !caseItem.audio.path) {
-            return res.status(404).json({ success: false, message: 'Audio file not found.' });
-        }
-
-        const absolutePath = path.resolve(caseItem.audio.path);
-        if (!fs.existsSync(absolutePath)) {
-            return res.status(404).json({ success: false, message: 'Audio file missing from server storage.' });
-        }
-
-        const stat = fs.statSync(absolutePath);
-        const fileSize = stat.size;
-        const range = req.headers.range;
-
-        if (range) {
-            const parts = range.replace(/bytes=/, "").split("-");
-            const start = parseInt(parts[0], 10);
-            const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
-            const chunksize = (end - start) + 1;
-            const file = fs.createReadStream(absolutePath, { start, end });
-            
-            const head = {
-                'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-                'Accept-Ranges': 'bytes',
-                'Content-Length': chunksize,
-                'Content-Type': 'audio/webm',
-            };
-
-            res.writeHead(206, head);
-            file.pipe(res);
-        } else {
-            const head = {
-                'Content-Length': fileSize,
-                'Content-Type': 'audio/webm',
-            };
-            res.writeHead(200, head);
-            fs.createReadStream(absolutePath).pipe(res);
-        }
+        const item = await Case.findOne({ caseId: req.params.caseId, ngoId: req.ngoId });
+        if (!item?.audio?.filename) return res.status(404).json({ success: false, message: "Audio not found." });
+        const filePath = path.join(uploadsDir, item.audio.filename);
+        if (!fs.existsSync(filePath)) return res.status(404).json({ success: false, message: "Audio file is missing." });
+        res.type(item.audio.mimeType || "audio/webm");
+        res.setHeader("Content-Disposition", `inline; filename="${String(item.audio.originalName || item.audio.filename).replace(/"/g, "")}"`);
+        fs.createReadStream(filePath).pipe(res);
     } catch (error) {
-        console.error("Audio streaming error:", error);
-        res.status(500).json({ success: false, message: 'Error streaming audio.' });
+        res.status(500).json({ success: false, message: "Could not play audio." });
     }
 });
 
-// Stream the uploaded video for the NGO Portal
-router.get('/:caseId/video', async (req, res) => {
+router.get("/:caseId/video", authenticateNgo, async (req, res) => {
     try {
-        const caseItem = await Case.findOne({
-            caseId: req.params.caseId
-        });
+        const item = await Case.findOne({ caseId: req.params.caseId, ngoId: req.ngoId });
+        if (!item?.video?.filename) return res.status(404).json({ success: false, message: "Video not found." });
+        const filePath = path.join(uploadsDir, item.video.filename);
+        if (!fs.existsSync(filePath)) return res.status(404).json({ success: false, message: "Video file is missing." });
+        res.type(item.video.mimeType || "video/webm");
+        res.setHeader("Content-Disposition", `inline; filename="${String(item.video.originalName || item.video.filename).replace(/\"/g, "")}"`);
+        fs.createReadStream(filePath).pipe(res);
+    } catch (error) {
+        res.status(500).json({ success: false, message: "Could not play video." });
+    }
+});
 
-        if (!caseItem || !caseItem.video) {
-            return res.status(404).json({
-                success: false,
-                message: "Video report not found."
-            });
-        }
-
-        const path = require("path");
-        const fs = require("fs");
-
-        // Use the stored path, with a filename-based fallback
-        const storedPath = caseItem.video.path;
-
-        const videoPath = storedPath && fs.existsSync(storedPath)
-            ? storedPath
-            : path.join(
-                __dirname,
-                "../uploads",
-                caseItem.video.filename
-            );
-
-        if (!fs.existsSync(videoPath)) {
-            console.error("Video file missing:", videoPath);
-
-            return res.status(404).json({
-                success: false,
-                message: "The uploaded video file could not be found."
-            });
-        }
-
-        // Determine the video format
-        const ext = path.extname(videoPath).toLowerCase();
-
-        const mimeTypes = {
-            ".webm": "video/webm",
-            ".mp4": "video/mp4",
-            ".ogg": "video/ogg",
-            ".ogv": "video/ogg",
-            ".mov": "video/quicktime"
+// Backward-compatible separate audio upload endpoint.
+router.post("/:caseId/audio", upload.single("audio"), async (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ success: false, message: "Please provide an audio file." });
+        const item = await Case.findOne({ caseId: req.params.caseId, ngoId: req.ngoId });
+        if (!item) return res.status(404).json({ success: false, message: "Case not found." });
+        item.audio = {
+            filename: req.file.filename,
+            originalName: req.file.originalname,
+            mimeType: req.file.mimetype,
+            size: req.file.size,
+            uploadedAt: new Date()
         };
-
-        const contentType =
-            mimeTypes[ext] || "application/octet-stream";
-
-        // Let Express handle video streaming and Range requests
-        res.sendFile(
-            videoPath,
-            {
-                headers: {
-                    "Content-Type": contentType,
-                    "Accept-Ranges": "bytes",
-                    "Cache-Control": "no-cache"
-                }
-            },
-            (err) => {
-                if (err && !res.headersSent) {
-                    console.error("Video streaming error:", err);
-
-                    res.status(err.statusCode || 500).end();
-                }
-            }
-        );
-
+        await item.save();
+        res.json({ success: true, message: "Audio uploaded successfully.", case: item });
     } catch (error) {
-        console.error("Error serving video:", error);
-
-        if (!res.headersSent) {
-            res.status(500).json({
-                success: false,
-                message: "Unable to load the video report."
-            });
-        }
+        res.status(500).json({ success: false, message: "Audio upload failed.", error: error.message });
     }
 });
 
-// Update Case Status / Counsellor
-router.patch('/:caseId', async (req, res) => {
+router.get("/:caseId", authenticateNgo, async (req, res) => {
     try {
-        const { status, counsellor } = req.body;
-        const updateData = {};
-        if (status) updateData.status = status;
-        if (counsellor !== undefined) updateData.counsellor = counsellor;
-
-        const updatedCase = await Case.findOneAndUpdate(
-            { caseId: req.params.caseId },
-            { $set: updateData },
-            { new: true }
-        );
-
-        if (!updatedCase) {
-            return res.status(404).json({ success: false, message: 'Case not found.' });
-        }
-
-        res.json({ success: true, case: updatedCase });
+        const item = await Case.findOne({ caseId: req.params.caseId, ngoId: req.ngoId });
+        if (!item) return res.status(404).json({ success: false, message: "Case not found." });
+        res.json({ success: true, case: item });
     } catch (error) {
-        res.status(500).json({ success: false, message: 'Failed to update case.' });
+        res.status(500).json({ success: false, message: "Could not load case." });
     }
 });
 
-// Groq Speech-to-Text Transcription Route (Supports both Audio and Video files)
-router.post('/transcribe', upload.single('file'), async (req, res) => {
+router.patch("/:caseId", authenticateNgo, async (req, res) => {
     try {
-        const uploadedFile = req.file || (req.files && req.files['audio'] ? req.files['audio'][0] : null) || (req.files && req.files['video'] ? req.files['video'][0] : null);
-        
-        if (!uploadedFile) {
-            return res.status(400).json({ success: false, message: 'No audio or video file provided for transcription.' });
-        }
-
-        const fileBuffer = fs.readFileSync(uploadedFile.path);
-        const blob = new Blob([fileBuffer], { type: uploadedFile.mimetype || 'audio/webm' });
-        
-        const formData = new FormData();
-        formData.append('file', blob, uploadedFile.originalname);
-        formData.append('model', 'whisper-large-v3');
-
-        const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${process.env.GROQ_API_KEY}`
-            },
-            body: formData
-        });
-
-        const data = await response.json();
-        if (!response.ok) {
-            throw new Error(data.error?.message || 'Groq transcription failed');
-        }
-
-        res.json({ success: true, transcript: data.text });
+        const updates = {};
+        if (req.body.status !== undefined) updates.status = req.body.status;
+        if (req.body.counsellor !== undefined) updates.counsellor = req.body.counsellor;
+        const item = await Case.findOneAndUpdate({ caseId: req.params.caseId, ngoId: req.ngoId }, { $set: updates }, { new: true });
+        if (!item) return res.status(404).json({ success: false, message: "Case not found." });
+        res.json({ success: true, message: "Case updated successfully.", case: item });
     } catch (error) {
-        console.error("Transcription error:", error);
-        res.status(500).json({ success: false, message: error.message || 'Transcription failed.' });
+        res.status(500).json({ success: false, message: "Could not update case.", error: error.message });
     }
 });
 
