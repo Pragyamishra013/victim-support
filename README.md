@@ -15,15 +15,6 @@ The platform aims to make reporting more accessible through multimedia submissio
 - [Key Features](#-key-features)
 - [How It Works](#-how-it-works)
 - [Tech Stack](#-tech-stack)
-- [Project Architecture](#-project-architecture)
-- [Getting Started](#-getting-started)
-- [Environment Variables](#-environment-variables)
-- [Current Status](#-current-status)
-- [Future Enhancements](#-future-enhancements)
-- [Responsible AI and Privacy](#-responsible-ai-and-privacy)
-- [Team](#-team)
-- [Contributing](#-contributing)
-- [License](#-license)
 
 ## 🚨 Problem Statement
 
